@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "levels": [
+    {
+      "id": "level-1",
+      "name": "第 1 关",
+      "abilities": {
+        "moveSpeed": 240,
+        "jumpPower": 620,
+        "doubleJumpEnabled": false,
+        "doubleJumpPower": 560
+      },
+      "document": {
+        "version": 1,
+        "width": 2400,
+        "height": 720,
+        "gridSize": 32,
+        "objects": [
+          {
+            "id": "player-spawn",
+            "type": "player-spawn",
+            "x": 96,
+            "y": 560,
+            "width": 48,
+            "height": 64
+          },
+          {
+            "id": "ground",
+            "type": "platform",
+            "x": 0,
+            "y": 656,
+            "width": 2400,
+            "height": 64
+          },
+          {
+            "id": "first-spike",
+            "type": "spike",
+            "x": 640,
+            "y": 624,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "first-coin",
+            "type": "coin",
+            "x": 416,
+            "y": 512,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "goal",
+            "type": "goal",
+            "x": 2240,
+            "y": 560,
+            "width": 64,
+            "height": 96
+          }
+        ]
+      }
+    }
+  ]
+}
