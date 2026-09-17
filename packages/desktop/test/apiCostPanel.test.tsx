@@ -27,7 +27,7 @@ it('compact panel has no auto-start and trusted bridge is wired', () => {
   );
   expect(preload).toContain("ipcRenderer.invoke('settings:save-api-costs'");
   expect(main).toContain("secureHandle('settings:api-costs'");
-  expect(main).toContain(
+  expect(main.replace(/\s+/g, '')).toContain(
     'apiCosts.save(value,costProfiles(currentCostEndpoints()))',
   );
 });
