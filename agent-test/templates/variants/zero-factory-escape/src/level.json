@@ -1,0 +1,205 @@
+{
+  "version": 1,
+  "width": 2816,
+  "height": 720,
+  "gridSize": 32,
+  "objects": [
+    {
+      "id": "f1-spawn",
+      "type": "player-spawn",
+      "x": 96,
+      "y": 560,
+      "width": 48,
+      "height": 64
+    },
+    {
+      "id": "f1-ground",
+      "type": "platform",
+      "x": 0,
+      "y": 656,
+      "width": 2816,
+      "height": 64
+    },
+    {
+      "id": "f1-drop-a",
+      "type": "pit",
+      "x": 736,
+      "y": 656,
+      "width": 192,
+      "height": 64
+    },
+    {
+      "id": "f1-drop-b",
+      "type": "pit",
+      "x": 1792,
+      "y": 656,
+      "width": 160,
+      "height": 64
+    },
+    {
+      "id": "f1-platform-a",
+      "type": "platform",
+      "x": 320,
+      "y": 536,
+      "width": 192,
+      "height": 32
+    },
+    {
+      "id": "f1-platform-b",
+      "type": "platform",
+      "x": 992,
+      "y": 520,
+      "width": 224,
+      "height": 32
+    },
+    {
+      "id": "f1-platform-c",
+      "type": "platform",
+      "x": 1376,
+      "y": 480,
+      "width": 192,
+      "height": 32
+    },
+    {
+      "id": "f1-platform-d",
+      "type": "platform",
+      "x": 2048,
+      "y": 520,
+      "width": 192,
+      "height": 32
+    },
+    {
+      "id": "f1-platform-e",
+      "type": "platform",
+      "x": 2368,
+      "y": 464,
+      "width": 160,
+      "height": 32
+    },
+    {
+      "id": "f1-moving-a",
+      "type": "moving-platform",
+      "x": 760,
+      "y": 520,
+      "width": 144,
+      "height": 24,
+      "movement": { "axis": "horizontal", "distance": 160, "speed": 110 }
+    },
+    {
+      "id": "f1-moving-b",
+      "type": "moving-platform",
+      "x": 1792,
+      "y": 512,
+      "width": 160,
+      "height": 24,
+      "movement": { "axis": "horizontal", "distance": 160, "speed": 105 }
+    },
+    {
+      "id": "f1-moving-c",
+      "type": "moving-platform",
+      "x": 2304,
+      "y": 520,
+      "width": 128,
+      "height": 24,
+      "movement": { "axis": "vertical", "distance": 120, "speed": 90 }
+    },
+    {
+      "id": "f1-gear-a",
+      "type": "spike",
+      "x": 576,
+      "y": 616,
+      "width": 40,
+      "height": 40
+    },
+    {
+      "id": "f1-gear-c",
+      "type": "spike",
+      "x": 2224,
+      "y": 616,
+      "width": 40,
+      "height": 40
+    },
+    {
+      "id": "f1-robot-a",
+      "type": "slime",
+      "x": 1088,
+      "y": 592,
+      "width": 64,
+      "height": 64,
+      "movement": { "axis": "horizontal", "distance": 224, "speed": 72 }
+    },
+    {
+      "id": "f1-robot-b",
+      "type": "slime",
+      "x": 2112,
+      "y": 592,
+      "width": 64,
+      "height": 64,
+      "movement": { "axis": "horizontal", "distance": 256, "speed": 78 }
+    },
+    {
+      "id": "f1-energy-a",
+      "type": "coin",
+      "x": 400,
+      "y": 488,
+      "width": 32,
+      "height": 32
+    },
+    {
+      "id": "f1-energy-b",
+      "type": "coin",
+      "x": 800,
+      "y": 464,
+      "width": 32,
+      "height": 32
+    },
+    {
+      "id": "f1-energy-c",
+      "type": "coin",
+      "x": 1088,
+      "y": 472,
+      "width": 32,
+      "height": 32
+    },
+    {
+      "id": "f1-energy-d",
+      "type": "coin",
+      "x": 1456,
+      "y": 432,
+      "width": 32,
+      "height": 32
+    },
+    {
+      "id": "f1-energy-e",
+      "type": "coin",
+      "x": 1840,
+      "y": 456,
+      "width": 32,
+      "height": 32
+    },
+    {
+      "id": "f1-energy-f",
+      "type": "coin",
+      "x": 2432,
+      "y": 416,
+      "width": 32,
+      "height": 32
+    },
+    {
+      "id": "f1-checkpoint",
+      "type": "checkpoint",
+      "x": 1504,
+      "y": 560,
+      "width": 48,
+      "height": 96
+    },
+    {
+      "id": "f1-goal",
+      "type": "goal",
+      "x": 2688,
+      "y": 560,
+      "width": 64,
+      "height": 96
+    }
+  ]
+}

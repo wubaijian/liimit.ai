@@ -17,6 +17,56 @@ describe('可视化编辑器关卡数据', () => {
     expect(LEVEL_OBJECT_TYPES).toContain('checkpoint');
     expect(LEVEL_OBJECT_TYPES).toContain('slime');
     expect(LEVEL_OBJECT_TYPES).toContain('bee');
+    expect(LEVEL_OBJECT_TYPES).toContain('keycard');
+    expect(LEVEL_OBJECT_TYPES).toContain('security-door');
+    expect(LEVEL_OBJECT_TYPES).toContain('floor-switch');
+    expect(LEVEL_OBJECT_TYPES).toContain('laser-gate');
+  });
+
+  it('支持工厂门卡和安全门，并保持它们可拖动保存', () => {
+    const level = createDefaultLevelDocument();
+    level.objects.push(
+      {
+        id: 'factory-keycard',
+        type: 'keycard',
+        x: 640,
+        y: 512,
+        width: 48,
+        height: 32,
+      },
+      {
+        id: 'factory-security-door',
+        type: 'security-door',
+        x: 1_280,
+        y: 336,
+        width: 64,
+        height: 320,
+      },
+    );
+    expect(parseLevelDocument(level)).toEqual(level);
+  });
+
+  it('支持工厂地面开关和激光门，并保持它们可拖动保存', () => {
+    const level = createDefaultLevelDocument();
+    level.objects.push(
+      {
+        id: 'factory-switch',
+        type: 'floor-switch',
+        x: 512,
+        y: 636,
+        width: 160,
+        height: 20,
+      },
+      {
+        id: 'factory-laser-gate',
+        type: 'laser-gate',
+        x: 1_280,
+        y: 240,
+        width: 64,
+        height: 416,
+      },
+    );
+    expect(parseLevelDocument(level)).toEqual(level);
   });
 
   it('parses explicit enemies with safe patrol defaults', () => {

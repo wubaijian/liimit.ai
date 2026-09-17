@@ -68,6 +68,7 @@ export class StarterPreparationService {
   private readonly controllers = new Map<string, AbortController>();
   private queueTail: Promise<void> = Promise.resolve();
   private shuttingDown = false;
+  private readonly cancelled = new Set<string>();
 
   constructor(private readonly options: StarterPreparationServiceOptions) {}
 
@@ -106,6 +107,17 @@ export class StarterPreparationService {
     await Promise.allSettled([...this.jobs.values()]);
   }
 
+  isProjectBusy(projectId: string): boolean {
+    return this.jobs.has(projectId);
+  }
+
+  async cancel(projectId: string): Promise<void> {
+    if (!this.jobs.has(projectId)) return;
+    this.cancelled.add(projectId);
+    this.controllers.get(projectId)?.abort();
+    await this.jobs.get(projectId);
+  }
+
   private validateProject(project: ProjectRecord): void {
     if (!isFixedProductMode(project)) {
       throw new Error('只允许准备 Phaser 3 · 2D 横版平台项目。');
@@ -129,7 +141,7 @@ export class StarterPreparationService {
     this.controllers.set(project.id, controller);
 
     try {
-      if (this.shuttingDown) {
+      if (this.shuttingDown || this.cancelled.has(project.id)) {
         return await this.persistFailure(
           currentProject,
           currentPhase,
@@ -203,6 +215,7 @@ export class StarterPreparationService {
       const errorCode = classifyFailure(error, currentPhase, controller.signal);
       return this.persistFailure(currentProject, currentPhase, errorCode);
     } finally {
+      this.cancelled.delete(project.id);
       if (this.controllers.get(project.id) === controller) {
         this.controllers.delete(project.id);
       }

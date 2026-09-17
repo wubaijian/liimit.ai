@@ -12,6 +12,45 @@ import { Kind } from './tools.js';
 import type { Config } from '../config/config.js';
 
 describe('GameTypeClassifierTool mutation contract', () => {
+  it('never copies templates into an AI foundation, including repeated classification', async () => {
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'liimit-foundation-classifier-'),
+    );
+    try {
+      await fs.mkdir(path.join(root, 'src'));
+      for (const file of [
+        'levels.json',
+        'gameInfo.json',
+        'visualStyle.json',
+        'main.ts',
+      ]) {
+        await fs.writeFile(path.join(root, 'src', file), 'user content');
+      }
+      const result = await scaffoldGameProject({
+        projectRoot: root,
+        templatesDir: '/unused',
+        docsDir: '/unused',
+        archetype: 'platformer',
+        starterTemplateId: 'ai-foundation',
+      });
+      expect(result).toEqual({ copiedFiles: 0, preservedFiles: 4 });
+      expect(
+        await fs.readFile(path.join(root, 'src/levels.json'), 'utf8'),
+      ).toBe('user content');
+      await fs.unlink(path.join(root, 'src/main.ts'));
+      await expect(
+        scaffoldGameProject({
+          projectRoot: root,
+          templatesDir: '/unused',
+          docsDir: '/unused',
+          archetype: 'platformer',
+          starterTemplateId: 'ai-foundation',
+        }),
+      ).rejects.toThrow('不得复制示例');
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
   it('declares project writes and requires confirmation outside automatic modes', async () => {
     const projectRoot = path.resolve('project');
     const tool = new GameTypeClassifierTool({

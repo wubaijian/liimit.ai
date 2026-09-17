@@ -112,6 +112,69 @@ type PersistedTestProject = Omit<ProjectRecord, 'productMode'> & {
 describe('StateStore 固定项目迁移与持久化', () => {
   let root: string;
 
+  it('移除仅影响指定记录，重启保持移除；写入失败不丢记录', async () => {
+    const store = new StateStore();
+    await store.initialize();
+    const first = makeProject('remove-me');
+    const second = makeProject('keep-me');
+    await store.upsertProject(first);
+    await store.upsertProject(second);
+    const settings = store.getPublicSettings();
+    fileSystemFailure.nextOperation = 'writeFile';
+    fileSystemFailure.nextTarget = 'state';
+    await expect(store.removeProject(first.id)).rejects.toThrow();
+    expect(store.getProject(first.id)).toEqual(first);
+    await store.removeProject(first.id);
+    expect(store.getProject(first.id)).toBeUndefined();
+    expect(store.getProject(second.id)).toEqual(second);
+    expect(store.getPublicSettings()).toEqual(settings);
+    const reopened = new StateStore();
+    await reopened.initialize();
+    expect(reopened.getProject(first.id)).toBeUndefined();
+    expect(reopened.getProject(second.id)?.id).toBe(second.id);
+  });
+
+  it.each(['pending', 'active'] as const)(
+    'AI 创建 %s 重启后保留要求且不自动运行',
+    async (initialGeneration) => {
+      const project = {
+        ...makeProject('initial'),
+        creationMode: 'ai' as const,
+        initialGeneration,
+      };
+      await writeFile(
+        path.join(electronPaths.userData, 'state.json'),
+        JSON.stringify({ projects: [project], settings: {}, secrets: {} }),
+      );
+      const store = new StateStore();
+      await store.initialize();
+      expect(store.getProject(project.id)).toMatchObject({
+        prompt: project.prompt,
+        initialGeneration: 'incomplete',
+        status: 'stopped',
+      });
+      const second = new StateStore();
+      await second.initialize();
+      expect(second.getProject(project.id)).toEqual(
+        store.getProject(project.id),
+      );
+    },
+  );
+
+  it('旧项目不推断为 AI 创建，非法创建状态拒绝持久化', async () => {
+    const store = new StateStore();
+    await store.initialize();
+    const project = makeProject('old');
+    await store.upsertProject(project);
+    expect(store.getProject(project.id)?.initialGeneration).toBeUndefined();
+    await expect(
+      store.upsertProject({ ...project, creationMode: 'other' } as never),
+    ).rejects.toThrow();
+    await expect(
+      store.upsertProject({ ...project, initialGeneration: 'pending' }),
+    ).rejects.toThrow();
+  });
+
   beforeEach(async () => {
     root = await mkdtemp(path.join(os.tmpdir(), 'liimit-store-'));
     electronPaths.userData = path.join(root, 'user-data');
@@ -126,6 +189,38 @@ describe('StateStore 固定项目迁移与持久化', () => {
     fileSystemFailure.delay = undefined;
     fileSystemFailure.notifyStarted = undefined;
     await rm(root, { recursive: true, force: true });
+  });
+
+  it('保存独立音效密钥后立即返回已配置的脱敏状态', async () => {
+    const store = new StateStore();
+    await store.initialize();
+    const settings = store.getPublicSettings();
+    settings.audio = {
+      provider: 'elevenlabs',
+      baseUrl: 'https://api.elevenlabs.io',
+      model: 'music_v2',
+      apiKey: 'elevenlabs-audio-secret',
+      apiKeyConfigured: false,
+      apiKeyInherited: false,
+    };
+
+    const saved = await store.saveSettings(settings);
+
+    expect(saved.audio).toMatchObject({
+      provider: 'elevenlabs',
+      apiKey: '',
+      apiKeyConfigured: true,
+    });
+    expect(saved.audio.apiKeyInherited).not.toBe(true);
+    expect(store.getRuntimeSettings().audio.apiKey).toBe(
+      'elevenlabs-audio-secret',
+    );
+    const persisted = JSON.parse(
+      await readFile(path.join(electronPaths.userData, 'state.json'), 'utf8'),
+    ) as { secrets: { audio?: string } };
+    expect(persisted.secrets.audio).toBe(
+      encodedSecret('elevenlabs-audio-secret'),
+    );
   });
 
   it('混合状态先备份原始字节，再只保留固定项目且不删除目录、设置、凭据或未知键', async () => {

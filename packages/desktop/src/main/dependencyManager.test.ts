@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  commandEnvironment,
   createProcessCommandRunner,
   DependencyManager,
   type CommandInvocation,
@@ -14,6 +15,24 @@ import {
 import type { DesktopDependency } from '../shared/types.js';
 
 const HOME = '/Users/tester';
+describe('desktop child tool lookup', () => {
+  it('makes the discovered Node available to npm scripts without mutating the app environment', () => {
+    const source = { PATH: '/usr/bin:/bin' };
+    expect(
+      commandEnvironment(source, '/usr/local/bin/node', 'darwin').PATH,
+    ).toBe('/usr/local/bin:/usr/bin:/bin');
+    expect(source.PATH).toBe('/usr/bin:/bin');
+  });
+  it('preserves Windows Path spelling and existing tool locations', () => {
+    const result = commandEnvironment(
+      { Path: 'C:\\Windows' },
+      'C:\\Tools\\node.exe',
+      'win32',
+    );
+    expect(result.Path).toBe('C:\\Tools;C:\\Windows');
+    expect(result.PATH).toBeUndefined();
+  });
+});
 const BREW = '/opt/homebrew/bin/brew';
 const UNITY_HUB = '/Applications/Unity Hub.app/Contents/MacOS/Unity Hub';
 const WIN_HOME = String.raw`C:\Users\测试 User`;

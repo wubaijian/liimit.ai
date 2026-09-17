@@ -13,6 +13,9 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import path from 'node:path';
+import { verificationWorkflowInstructions } from './agentVerificationGuard.js';
+import { parseGameInfo } from '../shared/gameInfo.js';
+import { parseLevelCampaign } from '../shared/levelCampaign.js';
 import { parse, type DefaultTreeAdapterMap } from 'parse5';
 import {
   FIXED_PRODUCT_MODE,
@@ -215,6 +218,8 @@ export class ProjectManager {
         folderName,
         name,
         prompt,
+        starterTemplateId: input.starterTemplateId,
+        creationMode: input.creationMode,
       });
     } catch (error) {
       throw mapProjectCreationError(error);
@@ -241,6 +246,8 @@ export class ProjectManager {
     folderName: string;
     name: string;
     prompt: string;
+    starterTemplateId?: CreateProjectInput['starterTemplateId'];
+    creationMode?: CreateProjectInput['creationMode'];
   }): Promise<ProjectRecord> {
     const requestedWorkspace = path.resolve(input.directory);
     await mkdir(requestedWorkspace, { recursive: true });
@@ -263,9 +270,17 @@ export class ProjectManager {
       name: input.name,
       path: projectPath,
       prompt: input.prompt,
+      creationMode: input.creationMode ?? 'template',
+      ...(input.creationMode === 'ai'
+        ? { initialGeneration: 'pending' as const }
+        : {}),
       status: 'draft',
       stage: 'brief',
       productMode: FIXED_PRODUCT_MODE.id,
+      starterTemplateId:
+        input.creationMode === 'ai'
+          ? 'ai-foundation'
+          : (input.starterTemplateId ?? 'platformer-base'),
       createdAt: now,
       updatedAt: now,
       starterPreparation: {
@@ -296,7 +311,7 @@ export class ProjectManager {
 
   async prepareSystemPrompt(
     projectPath: string,
-    project: Pick<ProjectRecord, 'productMode'>,
+    project: Pick<ProjectRecord, 'productMode' | 'starterTemplateId'>,
   ): Promise<void> {
     assertFixedProject(project);
     const projectRoot = await this.resolveProjectRoot(projectPath);
@@ -307,6 +322,10 @@ export class ProjectManager {
       '{PROJECT_ROOT}': projectRoot,
     });
     localized += FIXED_PRODUCT_MODE_SYSTEM_GUARD;
+    if (project.starterTemplateId === 'ai-foundation') {
+      localized += `\n\n## AI 自主创建流程（优先于上文固定模板阶段）\n本项目仅复用 Phaser 引擎与编辑、保存、试玩基础能力，没有现成游戏。先读 src/AI_CREATION.md。不要复制示例关卡和美术，不必调用 classify_game_type 或 generate_gdd；不要先搭建或修复测试框架。首次创建应先按用户要求写 src/levels.json、src/level.json、src/gameInfo.json、src/visualStyle.json，再验证。待 AI 创建的校准工作区不算交付。后续修改保留用户已有内容并遵守修改确认机制。能力不足或需求歧义须明确询问，不得悄悄换成现成游戏。\n`;
+    }
+    localized += verificationWorkflowInstructions(projectRoot);
     const qwenDir = await this.ensureDirectoryInside(projectRoot, '.qwen');
     const systemPromptPath = path.join(qwenDir, 'system.md');
     await this.assertSafeWritableFile(projectRoot, systemPromptPath);
@@ -321,12 +340,28 @@ export class ProjectManager {
     assertFixedProject(project);
     const projectRoot = await this.resolveProjectRoot(project.path);
     if (!reportPhase) {
-      return this.fixedProjectProvisioner.prepare(projectRoot, signal);
+      if (!project.starterTemplateId) {
+        return this.fixedProjectProvisioner.prepare(projectRoot, signal);
+      }
+      return this.fixedProjectProvisioner.prepare(
+        projectRoot,
+        signal,
+        undefined,
+        project.starterTemplateId,
+      );
+    }
+    if (!project.starterTemplateId) {
+      return this.fixedProjectProvisioner.prepare(
+        projectRoot,
+        signal,
+        reportPhase,
+      );
     }
     return this.fixedProjectProvisioner.prepare(
       projectRoot,
       signal,
       reportPhase,
+      project.starterTemplateId,
     );
   }
 
@@ -500,6 +535,42 @@ export class ProjectManager {
       );
       if (!script.trim() || /^\s*(?:<!doctype\s+html|<html\b)/i.test(script)) {
         throw new Error('本地 Web 试玩入口脚本不是有效的 JavaScript。');
+      }
+      for (const endpoint of ['levels', 'game-info'] as const) {
+        const dataResponse = await fetch(
+          new URL(`/__liimit/${endpoint}.json`, probe.url),
+          {
+            headers: { Accept: 'application/json' },
+            signal: previewProbeSignal(signal),
+          },
+        );
+        if (
+          !dataResponse.ok ||
+          !dataResponse.headers
+            .get('content-type')
+            ?.toLowerCase()
+            .startsWith('application/json')
+        )
+          throw new Error(
+            `正式试玩数据 ${endpoint} 读取失败或不是 JSON（HTTP ${dataResponse.status}）。`,
+          );
+        const body = await readBoundedResponseText(
+          dataResponse,
+          MAX_PREVIEW_HTML_BYTES,
+          `试玩数据 ${endpoint}`,
+        );
+        let data: unknown;
+        try {
+          data = JSON.parse(body);
+        } catch {
+          throw new Error(`正式试玩数据 ${endpoint} 不是有效 JSON。`);
+        }
+        try {
+          if (endpoint === 'levels') parseLevelCampaign(data);
+          else parseGameInfo(data);
+        } catch {
+          throw new Error(`正式试玩数据 ${endpoint} 结构不完整。`);
+        }
       }
     } finally {
       await this.closePreviewServer(probe.server);
@@ -823,7 +894,7 @@ export class ProjectManager {
     return { absolutePath, info };
   }
 
-  private async stopPreview(projectId: string): Promise<void> {
+  async stopPreview(projectId: string): Promise<void> {
     const active = this.previews.get(projectId);
     if (!active) return;
     this.previews.delete(projectId);

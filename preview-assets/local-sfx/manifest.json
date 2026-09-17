@@ -1,0 +1,72 @@
+{
+  "generatedBy": "liimit.ai local deterministic synthesizer",
+  "apiUsed": false,
+  "sounds": [
+    {
+      "file": "jump.wav",
+      "label": "跳跃",
+      "description": "轻快向上的卡通弹跳声",
+      "durationSeconds": 0.42,
+      "sampleRate": 44100,
+      "channels": 1,
+      "bitsPerSample": 16,
+      "peak": 0.88,
+      "bytes": 37088
+    },
+    {
+      "file": "coin.wav",
+      "label": "金币",
+      "description": "两段式清脆拾取提示声",
+      "durationSeconds": 0.5,
+      "sampleRate": 44100,
+      "channels": 1,
+      "bitsPerSample": 16,
+      "peak": 0.88,
+      "bytes": 44144
+    },
+    {
+      "file": "death.wav",
+      "label": "死亡",
+      "description": "短促下坠、明确但不过分刺耳",
+      "durationSeconds": 0.92,
+      "sampleRate": 44100,
+      "channels": 1,
+      "bitsPerSample": 16,
+      "peak": 0.88,
+      "bytes": 81188
+    },
+    {
+      "file": "level-clear.wav",
+      "label": "通关",
+      "description": "四级上行的胜利小旋律",
+      "durationSeconds": 1.38,
+      "sampleRate": 44100,
+      "channels": 1,
+      "bitsPerSample": 16,
+      "peak": 0.88,
+      "bytes": 121760
+    },
+    {
+      "file": "enemy-hit.wav",
+      "label": "击中敌人",
+      "description": "有力度的碰撞与短促回弹",
+      "durationSeconds": 0.4,
+      "sampleRate": 44100,
+      "channels": 1,
+      "bitsPerSample": 16,
+      "peak": 0.88,
+      "bytes": 35324
+    },
+    {
+      "file": "checkpoint.wav",
+      "label": "检查点",
+      "description": "明亮安心的三段激活提示声",
+      "durationSeconds": 0.88,
+      "sampleRate": 44100,
+      "channels": 1,
+      "bitsPerSample": 16,
+      "peak": 0.88,
+      "bytes": 77660
+    }
+  ]
+}

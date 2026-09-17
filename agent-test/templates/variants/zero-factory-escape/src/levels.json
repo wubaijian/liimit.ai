@@ -1,0 +1,780 @@
+{
+  "version": 1,
+  "levels": [
+    {
+      "id": "level-1",
+      "name": "第 1 关 · 流水线车间",
+      "abilities": {
+        "moveSpeed": 245,
+        "jumpPower": 625,
+        "doubleJumpEnabled": false,
+        "doubleJumpPower": 565
+      },
+      "document": {
+        "version": 1,
+        "width": 2816,
+        "height": 720,
+        "gridSize": 32,
+        "objects": [
+          {
+            "id": "f1-spawn",
+            "type": "player-spawn",
+            "x": 96,
+            "y": 560,
+            "width": 48,
+            "height": 64
+          },
+          {
+            "id": "f1-ground",
+            "type": "platform",
+            "x": 0,
+            "y": 656,
+            "width": 2816,
+            "height": 64
+          },
+          {
+            "id": "f1-drop-a",
+            "type": "pit",
+            "x": 736,
+            "y": 656,
+            "width": 192,
+            "height": 64
+          },
+          {
+            "id": "f1-drop-b",
+            "type": "pit",
+            "x": 1792,
+            "y": 656,
+            "width": 160,
+            "height": 64
+          },
+          {
+            "id": "f1-platform-a",
+            "type": "platform",
+            "x": 320,
+            "y": 536,
+            "width": 192,
+            "height": 32
+          },
+          {
+            "id": "f1-platform-b",
+            "type": "platform",
+            "x": 992,
+            "y": 520,
+            "width": 224,
+            "height": 32
+          },
+          {
+            "id": "f1-platform-c",
+            "type": "platform",
+            "x": 1376,
+            "y": 480,
+            "width": 192,
+            "height": 32
+          },
+          {
+            "id": "f1-platform-d",
+            "type": "platform",
+            "x": 2048,
+            "y": 520,
+            "width": 192,
+            "height": 32
+          },
+          {
+            "id": "f1-platform-e",
+            "type": "platform",
+            "x": 2368,
+            "y": 464,
+            "width": 160,
+            "height": 32
+          },
+          {
+            "id": "f1-moving-a",
+            "type": "moving-platform",
+            "x": 760,
+            "y": 520,
+            "width": 144,
+            "height": 24,
+            "movement": { "axis": "horizontal", "distance": 160, "speed": 110 }
+          },
+          {
+            "id": "f1-moving-b",
+            "type": "moving-platform",
+            "x": 1792,
+            "y": 512,
+            "width": 160,
+            "height": 24,
+            "movement": { "axis": "horizontal", "distance": 160, "speed": 105 }
+          },
+          {
+            "id": "f1-moving-c",
+            "type": "moving-platform",
+            "x": 2304,
+            "y": 520,
+            "width": 128,
+            "height": 24,
+            "movement": { "axis": "vertical", "distance": 120, "speed": 90 }
+          },
+          {
+            "id": "f1-gear-a",
+            "type": "spike",
+            "x": 576,
+            "y": 616,
+            "width": 40,
+            "height": 40
+          },
+          {
+            "id": "f1-gear-c",
+            "type": "spike",
+            "x": 2224,
+            "y": 616,
+            "width": 40,
+            "height": 40
+          },
+          {
+            "id": "f1-robot-a",
+            "type": "slime",
+            "x": 1088,
+            "y": 592,
+            "width": 64,
+            "height": 64,
+            "movement": { "axis": "horizontal", "distance": 224, "speed": 72 }
+          },
+          {
+            "id": "f1-robot-b",
+            "type": "slime",
+            "x": 2112,
+            "y": 592,
+            "width": 64,
+            "height": 64,
+            "movement": { "axis": "horizontal", "distance": 256, "speed": 78 }
+          },
+          {
+            "id": "f1-energy-a",
+            "type": "coin",
+            "x": 400,
+            "y": 488,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "f1-energy-b",
+            "type": "coin",
+            "x": 800,
+            "y": 464,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "f1-energy-c",
+            "type": "coin",
+            "x": 1088,
+            "y": 472,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "f1-energy-d",
+            "type": "coin",
+            "x": 1456,
+            "y": 432,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "f1-energy-e",
+            "type": "coin",
+            "x": 1840,
+            "y": 456,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "f1-energy-f",
+            "type": "coin",
+            "x": 2432,
+            "y": 416,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "f1-checkpoint",
+            "type": "checkpoint",
+            "x": 1504,
+            "y": 560,
+            "width": 48,
+            "height": 96
+          },
+          {
+            "id": "f1-goal",
+            "type": "goal",
+            "x": 2688,
+            "y": 560,
+            "width": 64,
+            "height": 96
+          }
+        ]
+      }
+    },
+    {
+      "id": "level-2",
+      "name": "第 2 关 · 门禁区域",
+      "abilities": {
+        "moveSpeed": 250,
+        "jumpPower": 630,
+        "doubleJumpEnabled": true,
+        "doubleJumpPower": 570
+      },
+      "document": {
+        "version": 1,
+        "width": 3264,
+        "height": 720,
+        "gridSize": 32,
+        "objects": [
+          {
+            "id": "f2-spawn",
+            "type": "player-spawn",
+            "x": 96,
+            "y": 560,
+            "width": 48,
+            "height": 64
+          },
+          {
+            "id": "f2-ground",
+            "type": "platform",
+            "x": 0,
+            "y": 656,
+            "width": 3264,
+            "height": 64
+          },
+          {
+            "id": "f2-drop-a",
+            "type": "pit",
+            "x": 704,
+            "y": 656,
+            "width": 160,
+            "height": 64
+          },
+          {
+            "id": "f2-drop-b",
+            "type": "pit",
+            "x": 2240,
+            "y": 656,
+            "width": 224,
+            "height": 64
+          },
+          {
+            "id": "f2-platform-a",
+            "type": "platform",
+            "x": 320,
+            "y": 536,
+            "width": 192,
+            "height": 32
+          },
+          {
+            "id": "f2-platform-b",
+            "type": "platform",
+            "x": 928,
+            "y": 512,
+            "width": 224,
+            "height": 32
+          },
+          {
+            "id": "f2-platform-card",
+            "type": "platform",
+            "x": 1280,
+            "y": 480,
+            "width": 224,
+            "height": 32
+          },
+          {
+            "id": "f2-platform-c",
+            "type": "platform",
+            "x": 1920,
+            "y": 512,
+            "width": 192,
+            "height": 32
+          },
+          {
+            "id": "f2-platform-d",
+            "type": "platform",
+            "x": 2560,
+            "y": 480,
+            "width": 192,
+            "height": 32
+          },
+          {
+            "id": "f2-platform-e",
+            "type": "platform",
+            "x": 2848,
+            "y": 432,
+            "width": 160,
+            "height": 32
+          },
+          {
+            "id": "f2-moving-a",
+            "type": "moving-platform",
+            "x": 720,
+            "y": 520,
+            "width": 128,
+            "height": 24,
+            "movement": { "axis": "horizontal", "distance": 160, "speed": 115 }
+          },
+          {
+            "id": "f2-moving-b",
+            "type": "moving-platform",
+            "x": 1536,
+            "y": 480,
+            "width": 128,
+            "height": 24,
+            "movement": { "axis": "vertical", "distance": 128, "speed": 92 }
+          },
+          {
+            "id": "f2-moving-c",
+            "type": "moving-platform",
+            "x": 2272,
+            "y": 512,
+            "width": 144,
+            "height": 24,
+            "movement": { "axis": "horizontal", "distance": 190, "speed": 125 }
+          },
+          {
+            "id": "f2-gear-a",
+            "type": "spike",
+            "x": 576,
+            "y": 616,
+            "width": 40,
+            "height": 40
+          },
+          {
+            "id": "f2-gear-b",
+            "type": "spike",
+            "x": 1184,
+            "y": 616,
+            "width": 40,
+            "height": 40
+          },
+          {
+            "id": "f2-gear-c",
+            "type": "spike",
+            "x": 2112,
+            "y": 616,
+            "width": 40,
+            "height": 40
+          },
+          {
+            "id": "f2-gear-d",
+            "type": "spike",
+            "x": 2752,
+            "y": 616,
+            "width": 40,
+            "height": 40
+          },
+          {
+            "id": "f2-robot-a",
+            "type": "slime",
+            "x": 960,
+            "y": 592,
+            "width": 64,
+            "height": 64,
+            "movement": { "axis": "horizontal", "distance": 224, "speed": 74 }
+          },
+          {
+            "id": "f2-robot-b",
+            "type": "slime",
+            "x": 2016,
+            "y": 592,
+            "width": 64,
+            "height": 64,
+            "movement": { "axis": "horizontal", "distance": 256, "speed": 80 }
+          },
+          {
+            "id": "f2-robot-c",
+            "type": "slime",
+            "x": 2688,
+            "y": 592,
+            "width": 64,
+            "height": 64,
+            "movement": { "axis": "horizontal", "distance": 224, "speed": 82 }
+          },
+          {
+            "id": "f2-energy-a",
+            "type": "coin",
+            "x": 416,
+            "y": 488,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "f2-energy-b",
+            "type": "coin",
+            "x": 768,
+            "y": 464,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "f2-energy-c",
+            "type": "coin",
+            "x": 1024,
+            "y": 464,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "f2-energy-d",
+            "type": "coin",
+            "x": 1584,
+            "y": 416,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "f2-energy-e",
+            "type": "coin",
+            "x": 1984,
+            "y": 464,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "f2-energy-f",
+            "type": "coin",
+            "x": 2320,
+            "y": 456,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "f2-energy-g",
+            "type": "coin",
+            "x": 2912,
+            "y": 384,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "f2-keycard",
+            "type": "keycard",
+            "x": 1368,
+            "y": 432,
+            "width": 48,
+            "height": 32
+          },
+          {
+            "id": "f2-security-door",
+            "type": "security-door",
+            "x": 1760,
+            "y": 304,
+            "width": 72,
+            "height": 352
+          },
+          {
+            "id": "f2-checkpoint",
+            "type": "checkpoint",
+            "x": 1888,
+            "y": 560,
+            "width": 48,
+            "height": 96
+          },
+          {
+            "id": "f2-goal",
+            "type": "goal",
+            "x": 3104,
+            "y": 560,
+            "width": 64,
+            "height": 96
+          }
+        ]
+      }
+    },
+    {
+      "id": "level-3",
+      "name": "第 3 关 · 中央控制室",
+      "abilities": {
+        "moveSpeed": 255,
+        "jumpPower": 635,
+        "doubleJumpEnabled": true,
+        "doubleJumpPower": 575
+      },
+      "document": {
+        "version": 1,
+        "width": 3648,
+        "height": 720,
+        "gridSize": 32,
+        "objects": [
+          {
+            "id": "f3-spawn",
+            "type": "player-spawn",
+            "x": 96,
+            "y": 560,
+            "width": 48,
+            "height": 64
+          },
+          {
+            "id": "f3-ground",
+            "type": "platform",
+            "x": 0,
+            "y": 656,
+            "width": 3648,
+            "height": 64
+          },
+          {
+            "id": "f3-drop-a",
+            "type": "pit",
+            "x": 896,
+            "y": 656,
+            "width": 192,
+            "height": 64
+          },
+          {
+            "id": "f3-drop-b",
+            "type": "pit",
+            "x": 2592,
+            "y": 656,
+            "width": 224,
+            "height": 64
+          },
+          {
+            "id": "f3-platform-a",
+            "type": "platform",
+            "x": 384,
+            "y": 536,
+            "width": 192,
+            "height": 32
+          },
+          {
+            "id": "f3-platform-b",
+            "type": "platform",
+            "x": 704,
+            "y": 480,
+            "width": 160,
+            "height": 32
+          },
+          {
+            "id": "f3-platform-c",
+            "type": "platform",
+            "x": 1120,
+            "y": 520,
+            "width": 224,
+            "height": 32
+          },
+          {
+            "id": "f3-platform-d",
+            "type": "platform",
+            "x": 1408,
+            "y": 464,
+            "width": 192,
+            "height": 32
+          },
+          {
+            "id": "f3-platform-e",
+            "type": "platform",
+            "x": 2272,
+            "y": 512,
+            "width": 192,
+            "height": 32
+          },
+          {
+            "id": "f3-platform-f",
+            "type": "platform",
+            "x": 2848,
+            "y": 496,
+            "width": 192,
+            "height": 32
+          },
+          {
+            "id": "f3-platform-g",
+            "type": "platform",
+            "x": 3168,
+            "y": 448,
+            "width": 192,
+            "height": 32
+          },
+          {
+            "id": "f3-moving-a",
+            "type": "moving-platform",
+            "x": 920,
+            "y": 520,
+            "width": 144,
+            "height": 24,
+            "movement": { "axis": "horizontal", "distance": 176, "speed": 120 }
+          },
+          {
+            "id": "f3-moving-b",
+            "type": "moving-platform",
+            "x": 2624,
+            "y": 504,
+            "width": 160,
+            "height": 24,
+            "movement": { "axis": "horizontal", "distance": 208, "speed": 130 }
+          },
+          {
+            "id": "f3-switch-a",
+            "type": "floor-switch",
+            "x": 160,
+            "y": 636,
+            "width": 192,
+            "height": 20
+          },
+          {
+            "id": "f3-switch-b",
+            "type": "floor-switch",
+            "x": 1792,
+            "y": 636,
+            "width": 176,
+            "height": 20
+          },
+          {
+            "id": "f3-laser-gate",
+            "type": "laser-gate",
+            "x": 2144,
+            "y": 240,
+            "width": 64,
+            "height": 416
+          },
+          {
+            "id": "f3-gear-a",
+            "type": "spike",
+            "x": 608,
+            "y": 616,
+            "width": 40,
+            "height": 40
+          },
+          {
+            "id": "f3-gear-b",
+            "type": "spike",
+            "x": 1280,
+            "y": 616,
+            "width": 40,
+            "height": 40
+          },
+          {
+            "id": "f3-gear-c",
+            "type": "spike",
+            "x": 2000,
+            "y": 616,
+            "width": 40,
+            "height": 40
+          },
+          {
+            "id": "f3-robot-a",
+            "type": "slime",
+            "x": 1152,
+            "y": 592,
+            "width": 64,
+            "height": 64,
+            "movement": { "axis": "horizontal", "distance": 224, "speed": 82 }
+          },
+          {
+            "id": "f3-robot-b",
+            "type": "slime",
+            "x": 1536,
+            "y": 592,
+            "width": 64,
+            "height": 64,
+            "movement": { "axis": "horizontal", "distance": 256, "speed": 86 }
+          },
+          {
+            "id": "f3-robot-c",
+            "type": "slime",
+            "x": 2400,
+            "y": 592,
+            "width": 64,
+            "height": 64,
+            "movement": { "axis": "horizontal", "distance": 256, "speed": 88 }
+          },
+          {
+            "id": "f3-robot-d",
+            "type": "slime",
+            "x": 3328,
+            "y": 608,
+            "width": 48,
+            "height": 48,
+            "movement": { "axis": "horizontal", "distance": 96, "speed": 54 }
+          },
+          {
+            "id": "f3-energy-a",
+            "type": "coin",
+            "x": 448,
+            "y": 488,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "f3-energy-b",
+            "type": "coin",
+            "x": 768,
+            "y": 432,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "f3-energy-c",
+            "type": "coin",
+            "x": 976,
+            "y": 464,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "f3-energy-d",
+            "type": "coin",
+            "x": 1472,
+            "y": 416,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "f3-energy-e",
+            "type": "coin",
+            "x": 1872,
+            "y": 576,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "f3-energy-f",
+            "type": "coin",
+            "x": 2336,
+            "y": 464,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "f3-energy-g",
+            "type": "coin",
+            "x": 2704,
+            "y": 448,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "f3-energy-h",
+            "type": "coin",
+            "x": 3232,
+            "y": 400,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "f3-checkpoint",
+            "type": "checkpoint",
+            "x": 2368,
+            "y": 560,
+            "width": 192,
+            "height": 96
+          },
+          {
+            "id": "f3-goal",
+            "type": "goal",
+            "x": 3504,
+            "y": 560,
+            "width": 64,
+            "height": 96
+          }
+        ]
+      }
+    }
+  ]
+}

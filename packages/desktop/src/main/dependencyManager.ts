@@ -1039,7 +1039,7 @@ export function createProcessCommandRunner(
         platform !== 'win32' &&
         invocation.terminateProcessGroup === true;
       const child = spawnProcess(invocation.executable, invocation.args, {
-        env: environment,
+        env: commandEnvironment(environment, invocation.executable, platform),
         cwd: invocation.cwd,
         detached: launchDetached || useProcessGroup,
         shell: false,
@@ -1160,6 +1160,27 @@ export function createProcessCommandRunner(
       });
     });
   };
+}
+
+// Finder-launched apps have a minimal PATH. npm's child scripts must be able
+// to resolve the same Node executable that we explicitly discovered.
+export function commandEnvironment(
+  environment: NodeJS.ProcessEnv,
+  executable: string,
+  platform: NodeJS.Platform,
+): NodeJS.ProcessEnv {
+  const pathApi = platform === 'win32' ? path.win32 : path.posix;
+  if (!pathApi.isAbsolute(executable)) return { ...environment };
+  const result = { ...environment };
+  const key =
+    platform === 'win32'
+      ? (Object.keys(result).find((name) => name.toLowerCase() === 'path') ??
+        'PATH')
+      : 'PATH';
+  result[key] = [pathApi.dirname(executable), result[key]]
+    .filter(Boolean)
+    .join(pathApi.delimiter);
+  return result;
 }
 
 const defaultSpawnProcess: CommandProcessSpawner = (

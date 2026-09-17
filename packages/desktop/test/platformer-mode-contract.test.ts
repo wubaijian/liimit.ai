@@ -96,7 +96,7 @@ describe('固定横版平台产品模式契约', () => {
     );
   });
 
-  it('首页和新建弹窗只引导固定横版平台模式', () => {
+  it('首页和新建弹窗保留真实横版入口，并把 Godot 限定为演示工作台', () => {
     for (const label of [
       'Phaser 3 · 2D',
       '横版平台跳跃',
@@ -107,12 +107,17 @@ describe('固定横版平台产品模式契约', () => {
     }
     expect(app).not.toMatch(/5 种游戏架构|4 类生成模型|会选择模板/);
     expect(newProjectDialog).not.toContain('<select');
-    expect(newProjectDialog).not.toMatch(/俯视角|塔防|卡牌|回合制|3D 游戏/);
+    expect(newProjectDialog).toContain('俯视角迷宫');
+    expect(newProjectDialog).toContain('Godot');
+    expect(newProjectDialog).not.toContain('<Eye size={12} /> 演示模式');
+    expect(newProjectDialog).not.toMatch(/塔防|卡牌|回合制|3D 游戏/);
 
     const examples = newProjectDialog.match(
-      /const EXAMPLES = \[(?<body>[^\]]+)\]/s,
+      /const PLATFORMER_EXAMPLES = \[(?<body>[^\]]+)\]/s,
     );
     expect(examples?.groups?.body?.match(/横版/g)).toHaveLength(3);
+    expect(newProjectDialog).toContain('onPreviewGodot');
+    expect(newProjectDialog).toContain("gameType === 'maze'");
     expect(newProjectDialog).toContain('if (selected) setDirectory(selected);');
     expect(newProjectDialog).toContain(
       '<button type="button" onClick={chooseDirectory}>',

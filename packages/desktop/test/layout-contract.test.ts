@@ -41,11 +41,11 @@ describe('桌面工作台滚动边界', () => {
     expect(rule('.production-center')).toMatch(/overflow:\s*hidden/);
   });
 
-  it('展开 AI 修改助手后先显示输入框和启动按钮，再显示可滚动记录', () => {
-    expect(app.indexOf('className="composer"')).toBeLessThan(
+  it('AI 助手固定底部输入框，历史独立滚动', () => {
+    expect(app.indexOf('className="composer"')).toBeGreaterThan(
       app.indexOf('<EventStream'),
     );
-    expect(rule('.composer')).toMatch(/border-bottom:\s*1px/);
+    expect(rule('.composer')).toMatch(/border-top:\s*1px/);
   });
 
   it('自动跟随输出时不会滚动页面根节点', () => {
@@ -91,7 +91,9 @@ describe('白色产品工作台', () => {
       app.indexOf('className="production-center"'),
     );
     expect(app).not.toContain('<Pipeline');
-    expect(styles).toContain('grid-template-columns: minmax(0, 1fr) 350px');
+    expect(styles).toContain(
+      'grid-template-columns: minmax(0, 1fr) clamp(400px, 36vw, 560px)',
+    );
   });
 
   it('把 AI 修改明确标记为可选工具', () => {

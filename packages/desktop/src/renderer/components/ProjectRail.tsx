@@ -1,5 +1,5 @@
 import { FolderOpen, Plus, Settings } from 'lucide-react';
-import type { ProjectRecord } from '../../shared/types';
+import type { ProjectRecord, RemoveProjectInput } from '../../shared/types';
 import { gameAgentMascot as brandIcon } from '../assets';
 
 interface ProjectRailProps {
@@ -9,6 +9,8 @@ interface ProjectRailProps {
   onSelect: (project: ProjectRecord) => void;
   onCreate: () => void;
   onSettings: () => void;
+  onRemove?: (project: ProjectRecord, mode: RemoveProjectInput['mode']) => void;
+  removingId?: string;
 }
 
 const STATUS_LABEL: Record<ProjectRecord['status'], string> = {
@@ -27,6 +29,8 @@ export function ProjectRail({
   onSelect,
   onCreate,
   onSettings,
+  onRemove,
+  removingId,
 }: ProjectRailProps) {
   return (
     <aside className="project-rail">
@@ -65,20 +69,78 @@ export function ProjectRail({
           </div>
         ) : (
           projects.map((project) => (
-            <button
-              className={`project-item ${project.id === selectedId ? 'is-active' : ''}`}
-              key={project.id}
-              onClick={() => onSelect(project)}
-            >
-              <span
-                className={`status-dot status-${projectStatusTone(project)}`}
-              />
-              <span className="project-item-copy">
-                <strong>{project.name}</strong>
-                <small>{projectStatusLabel(project)}</small>
-              </span>
-              <time>{formatRelative(project.updatedAt)}</time>
-            </button>
+            <div className="project-row" key={project.id}>
+              <button
+                className={`project-item ${project.id === selectedId ? 'is-active' : ''}`}
+                key={project.id}
+                onClick={() => onSelect(project)}
+              >
+                <span
+                  className={`status-dot status-${projectStatusTone(project)}`}
+                />
+                <span className="project-item-copy">
+                  <strong>{project.name}</strong>
+                  <small>{projectStatusLabel(project)}</small>
+                  <span className="project-mode-label">
+                    PHASER 3 · 横版跳跃
+                  </span>
+                </span>
+              </button>
+              <details
+                className="project-actions"
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape') {
+                    event.currentTarget.open = false;
+                    event.currentTarget.querySelector('summary')?.focus();
+                  }
+                }}
+                onBlur={(event) => {
+                  if (
+                    !event.currentTarget.contains(
+                      event.relatedTarget as Node | null,
+                    )
+                  )
+                    event.currentTarget.open = false;
+                }}
+              >
+                <summary
+                  aria-label={`管理项目：${project.name}`}
+                  title="管理项目"
+                >
+                  ⋯
+                </summary>
+                <div className="project-action-menu">
+                  <button
+                    type="button"
+                    disabled={Boolean(removingId) || projectIsBusy(project)}
+                    onClick={(event) => {
+                      event.currentTarget
+                        .closest('details')
+                        ?.removeAttribute('open');
+                      onRemove?.(project, 'list-only');
+                    }}
+                  >
+                    从列表移除<span>保留电脑里的游戏文件</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="project-trash-action"
+                    disabled={Boolean(removingId) || projectIsBusy(project)}
+                    onClick={(event) => {
+                      event.currentTarget
+                        .closest('details')
+                        ?.removeAttribute('open');
+                      onRemove?.(project, 'trash');
+                    }}
+                  >
+                    删除项目及文件<span>移到废纸篓，可恢复文件</span>
+                  </button>
+                  {projectIsBusy(project) ? (
+                    <small>请先停止任务或等待准备完成</small>
+                  ) : null}
+                </div>
+              </details>
+            </div>
           ))
         )}
       </nav>
@@ -93,7 +155,21 @@ export function ProjectRail({
   );
 }
 
+function projectIsBusy(project: ProjectRecord): boolean {
+  return (
+    project.status === 'running' ||
+    project.initialGeneration === 'pending' ||
+    project.initialGeneration === 'active' ||
+    project.starterPreparation?.status === 'queued' ||
+    project.starterPreparation?.status === 'preparing'
+  );
+}
+
 function projectStatusLabel(project: ProjectRecord): string {
+  if (project.initialGeneration === 'pending') return '准备 AI 创建';
+  if (project.initialGeneration === 'active') return '按要求生成中';
+  if (project.initialGeneration === 'incomplete')
+    return project.status === 'stopped' ? 'AI 制作已停止' : 'AI 制作未完成';
   const preparation = project.starterPreparation;
   if (preparation?.status === 'failed') return '准备失败';
   if (preparation && preparation.status !== 'ready') return '正在准备';
@@ -104,6 +180,13 @@ function projectStatusLabel(project: ProjectRecord): string {
 }
 
 function projectStatusTone(project: ProjectRecord): ProjectRecord['status'] {
+  if (
+    project.initialGeneration === 'pending' ||
+    project.initialGeneration === 'active'
+  )
+    return 'running';
+  if (project.initialGeneration === 'incomplete')
+    return project.status === 'stopped' ? 'stopped' : 'failed';
   if (project.starterPreparation?.status === 'failed') return 'failed';
   if (
     project.starterPreparation?.status === 'ready' &&
@@ -118,12 +201,4 @@ function projectStatusTone(project: ProjectRecord): ProjectRecord['status'] {
     return 'running';
   }
   return project.status;
-}
-
-function formatRelative(value: string): string {
-  const diff = Date.now() - new Date(value).getTime();
-  if (diff < 60_000) return '刚刚';
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h`;
-  return `${Math.floor(diff / 86_400_000)}d`;
 }

@@ -100,6 +100,38 @@ describe('只读关卡画布', () => {
       width: 48,
       height: 48,
     });
+    level.objects.push({
+      id: 'keycard-1',
+      type: 'keycard',
+      x: 896,
+      y: 512,
+      width: 48,
+      height: 32,
+    });
+    level.objects.push({
+      id: 'security-door-1',
+      type: 'security-door',
+      x: 1_280,
+      y: 336,
+      width: 64,
+      height: 320,
+    });
+    level.objects.push({
+      id: 'floor-switch-1',
+      type: 'floor-switch',
+      x: 1_440,
+      y: 636,
+      width: 160,
+      height: 20,
+    });
+    level.objects.push({
+      id: 'laser-gate-1',
+      type: 'laser-gate',
+      x: 1_760,
+      y: 240,
+      width: 64,
+      height: 416,
+    });
     const markup = renderToStaticMarkup(<LevelCanvas level={level} />);
 
     for (const type of LEVEL_OBJECT_TYPES) {
@@ -108,6 +140,10 @@ describe('只读关卡画布', () => {
     expect(markup).toContain('只读关卡画布');
     expect(markup).toContain('坑洞');
     expect(markup).toContain('检查点');
+    expect(markup).toContain('蓝色门卡');
+    expect(markup).toContain('安全门');
+    expect(markup).toContain('控制开关');
+    expect(markup).toContain('激光门');
     expect(markup).toContain('↔');
     expect(markup).not.toContain('draggable');
   });

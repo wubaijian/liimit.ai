@@ -42,6 +42,28 @@ afterEach(async () => {
 });
 
 describe('ProjectManager project boundaries', () => {
+  it('persists AI creation intent and defaults legacy creation to template', async () => {
+    const fixture = await createFixture();
+    const ai = await fixture.manager.create({
+      name: 'ai-new',
+      directory: fixture.root,
+      prompt: '三关冰雪',
+      creationMode: 'ai',
+    });
+    expect(ai).toMatchObject({
+      creationMode: 'ai',
+      initialGeneration: 'pending',
+      starterTemplateId: 'ai-foundation',
+      prompt: '三关冰雪',
+    });
+    const legacy = await fixture.manager.create({
+      name: 'template-new',
+      directory: fixture.root,
+      prompt: '三关冰雪',
+    });
+    expect(legacy.creationMode).toBe('template');
+    expect(legacy.initialGeneration).toBeUndefined();
+  });
   it('prepares only the resolved fixed project directory through the trusted provisioner', async () => {
     const prepare = vi.fn(async () => ({
       scaffoldedFiles: 12,
@@ -295,6 +317,8 @@ describe('ProjectManager project boundaries', () => {
     expect(createdPrompt).toContain('应用内 Web');
     expect(createdPrompt).toContain('不得切换到其他游戏引擎');
     expect(createdPrompt).toContain('不得切换到其他游戏类型');
+    expect(createdPrompt).toContain(path.join(project.path, '.liimit-checks'));
+    expect(createdPrompt).toContain('不要运行 npm run dev');
 
     await fixture.manager.prepareSystemPrompt(project.path, project);
     expect(await readFile(systemPromptPath, 'utf8')).toBe(createdPrompt);
@@ -803,6 +827,42 @@ describe('ProjectManager preview server', () => {
 
     expect(getPreviewMap(fixture.manager).has(fixture.project.id)).toBe(false);
   });
+
+  it.each([
+    ['levels', '<!doctype html><html></html>', 'text/html', 200],
+    ['levels', 'not-json', 'application/json', 200],
+    ['levels', '{"version":1,"levels":[]}', 'application/json', 200],
+    ['game-info', '{"version":1}', 'application/json', 200],
+    ['game-info', 'failure', 'text/plain', 500],
+  ])(
+    'rejects invalid formal preview data: %s %s',
+    async (endpoint, body, type, status) => {
+      const fixture = await createPreviewFixture();
+      const nativeFetch = globalThis.fetch;
+      const spy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation((url, init) => {
+          if (String(url).endsWith(`/__liimit/${endpoint}.json`))
+            return Promise.resolve(
+              new Response(body as string, {
+                status: status as number,
+                headers: { 'content-type': type as string },
+              }),
+            );
+          return nativeFetch(url, init);
+        });
+      try {
+        await expect(
+          fixture.manager.verifyPlayableBuild(fixture.project),
+        ).rejects.toThrow('正式试玩数据');
+        expect(getPreviewMap(fixture.manager).has(fixture.project.id)).toBe(
+          false,
+        );
+      } finally {
+        spy.mockRestore();
+      }
+    },
+  );
 
   it.each([
     {

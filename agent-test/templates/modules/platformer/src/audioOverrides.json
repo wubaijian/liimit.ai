@@ -1,0 +1,8 @@
+{
+  "jump": null,
+  "coin": null,
+  "death": null,
+  "levelClear": null,
+  "enemyHit": null,
+  "checkpoint": null
+}

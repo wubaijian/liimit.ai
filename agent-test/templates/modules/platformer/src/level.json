@@ -1,11 +1,11 @@
 {
   "version": 1,
-  "width": 2400,
+  "width": 2624,
   "height": 720,
   "gridSize": 32,
   "objects": [
     {
-      "id": "player-spawn",
+      "id": "l1-spawn",
       "type": "player-spawn",
       "x": 96,
       "y": 560,
@@ -13,33 +13,138 @@
       "height": 64
     },
     {
-      "id": "ground",
+      "id": "l1-ground",
       "type": "platform",
       "x": 0,
       "y": 656,
-      "width": 2400,
+      "width": 2624,
       "height": 64
     },
     {
-      "id": "first-spike",
+      "id": "l1-pit-a",
+      "type": "pit",
+      "x": 720,
+      "y": 656,
+      "width": 160,
+      "height": 64
+    },
+    {
+      "id": "l1-pit-b",
+      "type": "pit",
+      "x": 1712,
+      "y": 656,
+      "width": 192,
+      "height": 64
+    },
+    {
+      "id": "l1-platform-a",
+      "type": "platform",
+      "x": 320,
+      "y": 528,
+      "width": 192,
+      "height": 32
+    },
+    {
+      "id": "l1-platform-b",
+      "type": "platform",
+      "x": 928,
+      "y": 544,
+      "width": 192,
+      "height": 32
+    },
+    {
+      "id": "l1-platform-c",
+      "type": "platform",
+      "x": 1376,
+      "y": 496,
+      "width": 224,
+      "height": 32
+    },
+    {
+      "id": "l1-platform-d",
+      "type": "platform",
+      "x": 1952,
+      "y": 528,
+      "width": 192,
+      "height": 32
+    },
+    {
+      "id": "l1-moving-a",
+      "type": "moving-platform",
+      "x": 736,
+      "y": 536,
+      "width": 128,
+      "height": 24,
+      "movement": { "axis": "horizontal", "distance": 240, "speed": 140 }
+    },
+    {
+      "id": "l1-spike-a",
       "type": "spike",
-      "x": 640,
+      "x": 576,
       "y": 624,
       "width": 32,
       "height": 32
     },
     {
-      "id": "first-coin",
-      "type": "coin",
-      "x": 416,
-      "y": 512,
+      "id": "l1-spike-b",
+      "type": "spike",
+      "x": 1632,
+      "y": 624,
       "width": 32,
       "height": 32
     },
     {
-      "id": "goal",
+      "id": "l1-crystal-a",
+      "type": "coin",
+      "x": 400,
+      "y": 480,
+      "width": 32,
+      "height": 32
+    },
+    {
+      "id": "l1-crystal-b",
+      "type": "coin",
+      "x": 784,
+      "y": 496,
+      "width": 32,
+      "height": 32
+    },
+    {
+      "id": "l1-crystal-c",
+      "type": "coin",
+      "x": 1008,
+      "y": 496,
+      "width": 32,
+      "height": 32
+    },
+    {
+      "id": "l1-crystal-d",
+      "type": "coin",
+      "x": 1472,
+      "y": 448,
+      "width": 32,
+      "height": 32
+    },
+    {
+      "id": "l1-crystal-e",
+      "type": "coin",
+      "x": 2032,
+      "y": 480,
+      "width": 32,
+      "height": 32
+    },
+    {
+      "id": "l1-checkpoint",
+      "type": "checkpoint",
+      "x": 1248,
+      "y": 560,
+      "width": 48,
+      "height": 96
+    },
+    {
+      "id": "l1-goal",
       "type": "goal",
-      "x": 2240,
+      "x": 2464,
       "y": 560,
       "width": 64,
       "height": 96

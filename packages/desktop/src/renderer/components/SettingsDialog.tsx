@@ -15,32 +15,51 @@ import {
   Settings,
   ShieldCheck,
   SquareTerminal,
+  Volume2,
   Wrench,
   X,
   Zap,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ApiCostPanel } from './ApiCostPanel';
 import type {
   AgentEvent,
   ApiUsageRecord,
   ApiUsageSnapshot,
   AppSettings,
+  AudioDurationSeconds,
+  AudioPreviewCandidate,
+  AudioPreviewCandidateNumber,
+  AudioPreviewProgress,
   DependencyAction,
   DesktopDependency,
   DesktopDependencyId,
+  GameSoundSlot,
   ProjectRecord,
+  ProjectAudioOverrideSnapshot,
   ProviderConnectionInput,
   ProviderConnectionResult,
   ProviderEndpoint,
   ProviderSlot,
 } from '../../shared/types';
+import {
+  AUDIO_DESCRIPTION_MAX_LENGTH,
+  AUDIO_DURATION_OPTIONS,
+  AUDIO_RECOMMENDED_DURATION_BY_SOUND,
+} from '../../shared/types';
+import {
+  pauseAndResetOtherCandidates,
+  removeCandidatePlayer,
+  replayCandidateFromStart,
+} from '../audioCandidatePlayback';
+import { generateMissingLocalCandidates } from '../localSfxFallback';
 
 interface SettingsDialogProps {
   value: AppSettings;
   project?: ProjectRecord;
   events: AgentEvent[];
   onClose: () => void;
-  onSave: (settings: AppSettings) => Promise<void>;
+  onSave: (settings: AppSettings) => Promise<AppSettings>;
   onTest: (input: ProviderConnectionInput) => Promise<ProviderConnectionResult>;
 }
 
@@ -140,6 +159,24 @@ const AUDIO_PRESETS: Partial<
   },
 };
 
+const GAME_SOUND_OPTIONS: Array<{ value: GameSoundSlot; label: string }> = [
+  { value: 'jump', label: '跳跃' },
+  { value: 'coin', label: '拾取金币' },
+  { value: 'death', label: '角色死亡' },
+  { value: 'levelClear', label: '完成关卡' },
+  { value: 'enemyHit', label: '踩中敌人' },
+  { value: 'checkpoint', label: '激活检查点' },
+];
+
+const GAME_SOUND_EXAMPLES: Record<GameSoundSlot, string> = {
+  jump: '例如：轻快、短促，像弹簧向上弹起的卡通跳跃声',
+  coin: '例如：清脆、明亮，像玻璃轻碰的奖励声音',
+  death: '例如：复古像素风，短促下降，但不要让人害怕',
+  levelClear: '例如：明亮、有成就感的简短通关提示声',
+  enemyHit: '例如：软乎乎的怪物被踩扁，带一点弹性的声音',
+  checkpoint: '例如：温暖、闪亮，表示检查点已经激活的声音',
+};
+
 const SECTION_NAV: Array<{
   key: SettingsSection;
   label: string;
@@ -180,6 +217,42 @@ export function SettingsDialog({
   const [developerView, setDeveloperView] = useState<DeveloperView>('prompts');
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [audioPreviewBusy, setAudioPreviewBusy] = useState(false);
+  const [audioApplyBusy, setAudioApplyBusy] = useState(false);
+  const [audioRestoreBusy, setAudioRestoreBusy] = useState(false);
+  const [audioSettingsDirty, setAudioSettingsDirty] = useState(false);
+  const [audioSound, setAudioSound] = useState<GameSoundSlot>('jump');
+  const [audioDescription, setAudioDescription] = useState('');
+  const [audioDurationSeconds, setAudioDurationSeconds] =
+    useState<AudioDurationSeconds>(AUDIO_RECOMMENDED_DURATION_BY_SOUND.jump);
+  const [audioOverrides, setAudioOverrides] =
+    useState<ProjectAudioOverrideSnapshot['overrides']>();
+  const [audioOverridesLoading, setAudioOverridesLoading] = useState(false);
+  const [audioCandidates, setAudioCandidates] = useState<
+    Array<{
+      url: string;
+      provider: AudioPreviewCandidate['provider'];
+      model: AudioPreviewCandidate['model'];
+      mimeType: AudioPreviewCandidate['mimeType'];
+      latencyMs: number;
+      sound: GameSoundSlot;
+      durationSeconds: AudioDurationSeconds;
+      candidateNumber: AudioPreviewCandidateNumber;
+      bytes: Uint8Array;
+    }>
+  >([]);
+  const [selectedAudioCandidate, setSelectedAudioCandidate] =
+    useState<AudioPreviewCandidateNumber>();
+  const [audioBatchFailedCount, setAudioBatchFailedCount] = useState(0);
+  const [audioPreviewProgress, setAudioPreviewProgress] =
+    useState<AudioPreviewProgress>();
+  const [audioStopBusy, setAudioStopBusy] = useState(false);
+  const audioCandidateUrls = useRef<string[]>([]);
+  const audioGenerationActive = useRef(false);
+  const activeAudioGenerationId = useRef<string | undefined>(undefined);
+  const audioStopRequested = useRef(false);
+  const audioOverridesRequest = useRef(0);
+  const mounted = useRef(true);
   const [feedback, setFeedback] = useState<{
     tone: 'success' | 'warning' | 'error' | 'progress';
     message: string;
@@ -214,19 +287,45 @@ export function SettingsDialog({
     ).length ?? 0;
 
   useEffect(() => {
+    mounted.current = true;
     void refreshUsage();
     const unsubscribe = window.gameAgent.onDependencyOutput((output) => {
       setDependencyLog((previous) =>
         `${previous}${output.text}`.slice(-60_000),
       );
     });
-    return unsubscribe;
+    const unsubscribeAudioPreviewProgress =
+      window.gameAgent.onAudioPreviewProgress((progress) => {
+        if (!mounted.current || !audioGenerationActive.current) return;
+        if (!activeAudioGenerationId.current) {
+          activeAudioGenerationId.current = progress.generationId;
+        }
+        if (progress.generationId !== activeAudioGenerationId.current) return;
+        setAudioPreviewProgress(progress);
+      });
+    return () => {
+      mounted.current = false;
+      unsubscribe();
+      unsubscribeAudioPreviewProgress();
+      audioGenerationActive.current = false;
+      audioCandidateUrls.current.forEach((url) => URL.revokeObjectURL(url));
+      audioCandidateUrls.current = [];
+    };
   }, []);
 
   useEffect(() => {
     if (section !== 'dependencies' || dependencies) return;
     void refreshDependencies();
   }, [section, dependencies]);
+
+  useEffect(() => {
+    if (!project) {
+      audioOverridesRequest.current += 1;
+      setAudioOverrides(undefined);
+      return;
+    }
+    void refreshAudioOverrides(project.id);
+  }, [project]);
 
   useEffect(() => {
     if (section !== 'developer' || !settings.developerMode || !project) {
@@ -255,6 +354,10 @@ export function SettingsDialog({
 
   function updateEndpoint(patch: Partial<ProviderEndpoint>) {
     setFeedback(undefined);
+    if (activeProvider === 'audio') {
+      setAudioSettingsDirty(true);
+      releaseAudioPreview();
+    }
     setSettings((previous) => ({
       ...previous,
       [activeProvider]: { ...previous[activeProvider], ...patch },
@@ -276,7 +379,10 @@ export function SettingsDialog({
     setBusy(true);
     setFeedback(undefined);
     try {
-      await onSave(settings);
+      const saved = await onSave(settings);
+      releaseAudioPreview();
+      setSettings(structuredClone(saved));
+      setAudioSettingsDirty(false);
       setFeedback({ tone: 'success', message: '设置已安全保存' });
     } catch (error) {
       setFeedback({ tone: 'error', message: toMessage(error) });
@@ -299,6 +405,296 @@ export function SettingsDialog({
       setFeedback({ tone: 'error', message: toMessage(error) });
     } finally {
       setTesting(false);
+    }
+  }
+
+  function releaseAudioPreview() {
+    audioCandidateUrls.current.forEach((url) => URL.revokeObjectURL(url));
+    audioCandidateUrls.current = [];
+    setAudioCandidates([]);
+    setSelectedAudioCandidate(undefined);
+    setAudioBatchFailedCount(0);
+  }
+
+  async function generateAudioPreview() {
+    const description = audioDescription.trim();
+    if (!description) {
+      setFeedback({
+        tone: 'warning',
+        message: '请先描述你想要的声音。',
+      });
+      return;
+    }
+    // Reject control characters before sending an audio description.
+    // eslint-disable-next-line no-control-regex
+    if (/[\u0000-\u001F\u007F-\u009F]/u.test(description)) {
+      setFeedback({
+        tone: 'warning',
+        message: '音效描述包含无法识别的字符，请重新输入。',
+      });
+      return;
+    }
+    if (
+      activeProvider !== 'audio' ||
+      current.provider !== 'elevenlabs' ||
+      !current.apiKeyConfigured ||
+      audioSettingsDirty
+    ) {
+      setFeedback({
+        tone: 'warning',
+        message: '请先保存当前 ElevenLabs 音频设置，再生成测试音效。',
+      });
+      return;
+    }
+
+    audioStopRequested.current = false;
+    activeAudioGenerationId.current = undefined;
+    audioGenerationActive.current = true;
+    setAudioPreviewProgress(undefined);
+    setAudioStopBusy(false);
+    setAudioPreviewBusy(true);
+    releaseAudioPreview();
+    setFeedback({
+      tone: 'progress',
+      message: `正在同时生成 3 条 ${audioDurationSeconds} 秒候选音效，请勿重复点击…`,
+    });
+    try {
+      const result = await window.gameAgent.generateAudioPreview({
+        sound: audioSound,
+        description: audioDescription.trim(),
+        durationSeconds: audioDurationSeconds,
+      });
+      if (!mounted.current) return;
+      if (audioStopRequested.current) {
+        setFeedback({
+          tone: 'warning',
+          message:
+            '本次音效生成已停止，所有候选均已作废。已完成的请求可能已经消耗额度。',
+        });
+        return;
+      }
+      const candidateUrls: string[] = [];
+      const candidates = result.candidates.map((candidate) => {
+        const sourceBytes = new Uint8Array(candidate.bytes);
+        const buffer = new ArrayBuffer(sourceBytes.byteLength);
+        new Uint8Array(buffer).set(sourceBytes);
+        const url = URL.createObjectURL(
+          new Blob([buffer], { type: candidate.mimeType }),
+        );
+        candidateUrls.push(url);
+        return {
+          url,
+          provider: candidate.provider,
+          model: candidate.model,
+          mimeType: candidate.mimeType,
+          latencyMs: candidate.latencyMs,
+          sound: candidate.sound,
+          durationSeconds: candidate.durationSeconds,
+          candidateNumber: candidate.candidateNumber,
+          bytes: sourceBytes,
+        };
+      });
+      audioCandidateUrls.current = candidateUrls;
+      setAudioCandidates(candidates);
+      setSelectedAudioCandidate(undefined);
+      setAudioBatchFailedCount(result.failedCount);
+      setFeedback({
+        tone: result.failedCount ? 'warning' : 'success',
+        message: result.failedCount
+          ? `已生成 ${result.candidates.length} 条候选，${result.failedCount} 条失败；可试听成功结果。`
+          : `3 条候选音效已生成，请试听后选择（${result.latencyMs} ms）`,
+      });
+      await refreshUsage();
+    } catch (error) {
+      if (mounted.current) {
+        setFeedback({
+          tone: audioStopRequested.current ? 'warning' : 'error',
+          message: audioStopRequested.current
+            ? '本次音效生成已停止，所有候选均已作废。已完成的请求可能已经消耗额度。'
+            : toMessage(error),
+        });
+      }
+    } finally {
+      audioGenerationActive.current = false;
+      activeAudioGenerationId.current = undefined;
+      if (mounted.current) {
+        setAudioPreviewBusy(false);
+        setAudioStopBusy(false);
+      }
+    }
+  }
+
+  async function cancelAudioPreviewGeneration() {
+    if (!audioPreviewBusy || audioStopBusy) return;
+    audioStopRequested.current = true;
+    setAudioStopBusy(true);
+    releaseAudioPreview();
+    setFeedback({ tone: 'progress', message: '正在停止本次音效生成…' });
+    try {
+      await window.gameAgent.cancelAudioPreviewGeneration();
+    } catch (error) {
+      audioStopRequested.current = false;
+      if (mounted.current) {
+        setAudioStopBusy(false);
+        setFeedback({ tone: 'error', message: toMessage(error) });
+      }
+    }
+  }
+
+  function fillMissingAudioCandidatesLocally() {
+    if (!audioBatchFailedCount || audioPreviewBusy || audioApplyBusy) return;
+    try {
+      const generated = generateMissingLocalCandidates({
+        sound: audioSound,
+        durationSeconds: audioDurationSeconds,
+        existingCandidateNumbers: audioCandidates.map(
+          (candidate) => candidate.candidateNumber,
+        ),
+      });
+      const localUrls: string[] = [];
+      const localCandidates = generated.map((candidate) => {
+        const sourceBytes = new Uint8Array(candidate.bytes);
+        const buffer = new ArrayBuffer(sourceBytes.byteLength);
+        new Uint8Array(buffer).set(sourceBytes);
+        const url = URL.createObjectURL(
+          new Blob([buffer], { type: candidate.mimeType }),
+        );
+        localUrls.push(url);
+        return {
+          url,
+          provider: candidate.provider,
+          model: candidate.model,
+          mimeType: candidate.mimeType,
+          latencyMs: candidate.latencyMs,
+          sound: candidate.sound,
+          durationSeconds: candidate.durationSeconds,
+          candidateNumber: candidate.candidateNumber,
+          bytes: sourceBytes,
+        };
+      });
+      audioCandidateUrls.current.push(...localUrls);
+      setAudioCandidates((currentCandidates) =>
+        [...currentCandidates, ...localCandidates].sort(
+          (left, right) => left.candidateNumber - right.candidateNumber,
+        ),
+      );
+      setAudioBatchFailedCount(0);
+      setFeedback({
+        tone: 'success',
+        message: `已在本机补齐 ${localCandidates.length} 条音效，没有调用 API，也不会产生 API 费用。`,
+      });
+    } catch (error) {
+      setFeedback({ tone: 'error', message: toMessage(error) });
+    }
+  }
+
+  async function applyAudioPreview() {
+    const selectedCandidate = audioCandidates.find(
+      (candidate) => candidate.candidateNumber === selectedAudioCandidate,
+    );
+    if (
+      !project ||
+      !selectedCandidate?.bytes ||
+      selectedCandidate.sound !== audioSound
+    ) {
+      setFeedback({
+        tone: 'warning',
+        message: !project
+          ? '请先选择一个游戏项目。'
+          : audioCandidates.length
+            ? '请先选择一条候选音效。'
+            : '请先生成并试听当前用途的音效。',
+      });
+      return;
+    }
+    setAudioApplyBusy(true);
+    setFeedback({
+      tone: 'progress',
+      message: '等待确认；确认后会保存音效并重新构建游戏…',
+    });
+    try {
+      const result = await window.gameAgent.applyAudioPreview({
+        projectId: project.id,
+        sound: selectedCandidate.sound,
+        mimeType: selectedCandidate.mimeType,
+        bytes: selectedCandidate.bytes,
+      });
+      if (!mounted.current) return;
+      if (result.status === 'cancelled') {
+        setFeedback({ tone: 'warning', message: '已取消，没有修改游戏。' });
+        return;
+      }
+      releaseAudioPreview();
+      await refreshAudioOverrides(project.id);
+      setFeedback({
+        tone: 'success',
+        message: '新音效已应用。关闭设置后刷新 Web 试玩即可体验。',
+      });
+    } catch (error) {
+      if (mounted.current) {
+        setFeedback({ tone: 'error', message: toMessage(error) });
+      }
+    } finally {
+      if (mounted.current) setAudioApplyBusy(false);
+    }
+  }
+
+  async function refreshAudioOverrides(projectId: string) {
+    const requestId = ++audioOverridesRequest.current;
+    setAudioOverridesLoading(true);
+    try {
+      const result =
+        await window.gameAgent.loadProjectAudioOverrides(projectId);
+      if (
+        mounted.current &&
+        requestId === audioOverridesRequest.current &&
+        result.projectId === projectId
+      ) {
+        setAudioOverrides(result.overrides);
+      }
+    } catch (error) {
+      if (mounted.current && requestId === audioOverridesRequest.current) {
+        setAudioOverrides(undefined);
+        setFeedback({ tone: 'error', message: toMessage(error) });
+      }
+    } finally {
+      if (mounted.current && requestId === audioOverridesRequest.current) {
+        setAudioOverridesLoading(false);
+      }
+    }
+  }
+
+  async function restoreProjectAudio() {
+    if (!project || !audioOverrides?.[audioSound]) return;
+    setAudioRestoreBusy(true);
+    setFeedback({
+      tone: 'progress',
+      message: '等待确认；确认后会恢复内置声音并重新构建游戏…',
+    });
+    try {
+      const result = await window.gameAgent.restoreProjectAudio({
+        projectId: project.id,
+        sound: audioSound,
+      });
+      if (!mounted.current) return;
+      if (result.status === 'cancelled') {
+        setFeedback({ tone: 'warning', message: '已取消，没有修改游戏。' });
+        return;
+      }
+      await refreshAudioOverrides(project.id);
+      setFeedback({
+        tone: 'success',
+        message:
+          result.status === 'restored'
+            ? '已恢复内置音效。关闭设置后刷新 Web 试玩即可体验。'
+            : '当前已经是内置音效，无需恢复。',
+      });
+    } catch (error) {
+      if (mounted.current) {
+        setFeedback({ tone: 'error', message: toMessage(error) });
+      }
+    } finally {
+      if (mounted.current) setAudioRestoreBusy(false);
     }
   }
 
@@ -435,9 +831,52 @@ export function SettingsDialog({
                 usageLoading={usageLoading}
                 project={project}
                 events={events}
-                onActiveChange={setActiveProvider}
+                audioCandidates={audioCandidates}
+                selectedAudioCandidate={selectedAudioCandidate}
+                audioBatchFailedCount={audioBatchFailedCount}
+                audioPreviewBusy={audioPreviewBusy}
+                audioPreviewProgress={audioPreviewProgress}
+                audioStopBusy={audioStopBusy}
+                audioApplyBusy={audioApplyBusy}
+                audioRestoreBusy={audioRestoreBusy}
+                audioSettingsDirty={audioSettingsDirty}
+                audioSound={audioSound}
+                audioDescription={audioDescription}
+                audioDurationSeconds={audioDurationSeconds}
+                audioOverrides={audioOverrides}
+                audioOverridesLoading={audioOverridesLoading}
+                onActiveChange={(slot) => {
+                  setActiveProvider(slot);
+                  if (slot !== 'audio') releaseAudioPreview();
+                }}
                 onProviderChange={selectProvider}
                 onEndpointChange={updateEndpoint}
+                onGenerateAudioPreview={() => void generateAudioPreview()}
+                onCancelAudioPreview={() => void cancelAudioPreviewGeneration()}
+                onAudioSoundChange={(sound) => {
+                  if (sound !== audioSound) releaseAudioPreview();
+                  setAudioSound(sound);
+                  setAudioDurationSeconds(
+                    AUDIO_RECOMMENDED_DURATION_BY_SOUND[sound],
+                  );
+                  setFeedback(undefined);
+                }}
+                onAudioDescriptionChange={(description) => {
+                  if (description !== audioDescription) releaseAudioPreview();
+                  setAudioDescription(description);
+                  setFeedback(undefined);
+                }}
+                onAudioDurationChange={(durationSeconds) => {
+                  if (durationSeconds !== audioDurationSeconds) {
+                    releaseAudioPreview();
+                  }
+                  setAudioDurationSeconds(durationSeconds);
+                  setFeedback(undefined);
+                }}
+                onAudioCandidateSelect={setSelectedAudioCandidate}
+                onFillMissingAudioCandidates={fillMissingAudioCandidatesLocally}
+                onApplyAudioPreview={() => void applyAudioPreview()}
+                onRestoreProjectAudio={() => void restoreProjectAudio()}
                 onRefresh={() => void refreshUsage()}
               />
             ) : null}
@@ -508,7 +947,13 @@ export function SettingsDialog({
                 <button
                   className="secondary-button"
                   onClick={() => void testConnection()}
-                  disabled={busy || testing}
+                  disabled={
+                    busy ||
+                    testing ||
+                    audioPreviewBusy ||
+                    audioApplyBusy ||
+                    audioRestoreBusy
+                  }
                 >
                   {testing ? (
                     <LoaderCircle className="spin" size={15} />
@@ -521,7 +966,13 @@ export function SettingsDialog({
               <button
                 className="primary-button"
                 onClick={() => void save()}
-                disabled={busy || testing}
+                disabled={
+                  busy ||
+                  testing ||
+                  audioPreviewBusy ||
+                  audioApplyBusy ||
+                  audioRestoreBusy
+                }
               >
                 <Save size={15} />
                 {busy ? '保存中…' : '保存设置'}
@@ -542,9 +993,42 @@ interface ApiPanelProps {
   usageLoading: boolean;
   project?: ProjectRecord;
   events: AgentEvent[];
+  audioCandidates: Array<{
+    url: string;
+    provider: AudioPreviewCandidate['provider'];
+    model: AudioPreviewCandidate['model'];
+    mimeType: AudioPreviewCandidate['mimeType'];
+    latencyMs: number;
+    sound: GameSoundSlot;
+    durationSeconds: AudioDurationSeconds;
+    candidateNumber: AudioPreviewCandidateNumber;
+    bytes: Uint8Array;
+  }>;
+  selectedAudioCandidate?: AudioPreviewCandidateNumber;
+  audioBatchFailedCount: number;
+  audioPreviewBusy: boolean;
+  audioPreviewProgress?: AudioPreviewProgress;
+  audioStopBusy: boolean;
+  audioApplyBusy: boolean;
+  audioRestoreBusy: boolean;
+  audioSettingsDirty: boolean;
+  audioSound: GameSoundSlot;
+  audioDescription: string;
+  audioDurationSeconds: AudioDurationSeconds;
+  audioOverrides?: ProjectAudioOverrideSnapshot['overrides'];
+  audioOverridesLoading: boolean;
   onActiveChange: (slot: ProviderSlot) => void;
   onProviderChange: (provider: ProviderEndpoint['provider']) => void;
   onEndpointChange: (patch: Partial<ProviderEndpoint>) => void;
+  onGenerateAudioPreview: () => void;
+  onCancelAudioPreview: () => void;
+  onAudioSoundChange: (sound: GameSoundSlot) => void;
+  onAudioDescriptionChange: (description: string) => void;
+  onAudioDurationChange: (durationSeconds: AudioDurationSeconds) => void;
+  onAudioCandidateSelect: (candidate: AudioPreviewCandidateNumber) => void;
+  onFillMissingAudioCandidates: () => void;
+  onApplyAudioPreview: () => void;
+  onRestoreProjectAudio: () => void;
   onRefresh: () => void;
 }
 
@@ -556,12 +1040,94 @@ function ApiPanel({
   usageLoading,
   project,
   events,
+  audioCandidates,
+  selectedAudioCandidate,
+  audioBatchFailedCount,
+  audioPreviewBusy,
+  audioPreviewProgress,
+  audioStopBusy,
+  audioApplyBusy,
+  audioRestoreBusy,
+  audioSettingsDirty,
+  audioSound,
+  audioDescription,
+  audioDurationSeconds,
+  audioOverrides,
+  audioOverridesLoading,
   onActiveChange,
   onProviderChange,
   onEndpointChange,
+  onGenerateAudioPreview,
+  onCancelAudioPreview,
+  onAudioSoundChange,
+  onAudioDescriptionChange,
+  onAudioDurationChange,
+  onAudioCandidateSelect,
+  onFillMissingAudioCandidates,
+  onApplyAudioPreview,
+  onRestoreProjectAudio,
   onRefresh,
 }: ApiPanelProps) {
   const [activityView, setActivityView] = useState<'work' | 'usage'>('work');
+  const [playingAudioCandidate, setPlayingAudioCandidate] =
+    useState<AudioPreviewCandidateNumber>();
+  const [audioPlaybackError, setAudioPlaybackError] = useState('');
+  const candidateAudioPlayers = useRef<
+    Map<AudioPreviewCandidateNumber, HTMLAudioElement>
+  >(new Map());
+  const candidateAudioRefCallbacks = useRef(
+    new Map<
+      AudioPreviewCandidateNumber,
+      (element: HTMLAudioElement | null) => void
+    >(),
+  );
+
+  function candidateAudioRef(candidateNumber: AudioPreviewCandidateNumber) {
+    const existing = candidateAudioRefCallbacks.current.get(candidateNumber);
+    if (existing) return existing;
+    const callback = (element: HTMLAudioElement | null) => {
+      if (element) {
+        candidateAudioPlayers.current.set(candidateNumber, element);
+        return;
+      }
+      removeCandidatePlayer(candidateAudioPlayers.current, candidateNumber);
+      setPlayingAudioCandidate((current) =>
+        current === candidateNumber ? undefined : current,
+      );
+    };
+    candidateAudioRefCallbacks.current.set(candidateNumber, callback);
+    return callback;
+  }
+
+  function handleCandidatePlay(candidateNumber: AudioPreviewCandidateNumber) {
+    pauseAndResetOtherCandidates(
+      candidateAudioPlayers.current,
+      candidateNumber,
+    );
+    setAudioPlaybackError('');
+    setPlayingAudioCandidate(candidateNumber);
+  }
+
+  function handleCandidateStopped(
+    candidateNumber: AudioPreviewCandidateNumber,
+  ) {
+    setPlayingAudioCandidate((current) =>
+      current === candidateNumber ? undefined : current,
+    );
+  }
+
+  async function replayCandidate(candidateNumber: AudioPreviewCandidateNumber) {
+    setAudioPlaybackError('');
+    try {
+      await replayCandidateFromStart(
+        candidateAudioPlayers.current,
+        candidateNumber,
+      );
+      setPlayingAudioCandidate(candidateNumber);
+    } catch {
+      setAudioPlaybackError('当前候选无法播放，请重新生成后再试。');
+    }
+  }
   const totals = usage?.totals;
   const successRate = totals?.runs
     ? Math.round((totals.successes / totals.runs) * 100)
@@ -599,6 +1165,7 @@ function ApiPanel({
         </button>
       </div>
 
+      <ApiCostPanel projectId={null} />
       <div className="usage-metrics" aria-label="API 用量摘要">
         <MetricCard
           label="API CALLS"
@@ -739,6 +1306,331 @@ function ApiPanel({
             <div className="security-note warning">
               请把 Base URL 中的 PROJECT_ID 替换为 Google Cloud 项目，并在 API
               Key 栏填写 OAuth Access Token。
+            </div>
+          ) : null}
+          {active === 'audio' && current.provider === 'elevenlabs' ? (
+            <div className="audio-preview-card">
+              <div className="audio-preview-heading">
+                <span className="audio-preview-icon">
+                  <Volume2 size={16} />
+                </span>
+                <div>
+                  <strong>AI 音效生成与应用</strong>
+                  <small>
+                    {audioCandidates.length
+                      ? `已经生成 ${audioCandidates.length} 条，可以试听`
+                      : '尚未生成候选音效'}
+                  </small>
+                </div>
+                <span className={audioCandidates.length ? 'is-ready' : ''}>
+                  {audioCandidates.length ? 'READY' : 'TEST'}
+                </span>
+              </div>
+              <p>
+                一次会同时生成 3 条候选音效并发起 3 次请求，ElevenLabs
+                额度消耗约为生成单条的 3
+                倍。生成时会显示真实进度，也可以主动停止。请分别试听、主动选择一条，再确认应用到当前游戏。
+              </p>
+              <label className="audio-sound-purpose">
+                <span>这段声音用于</span>
+                <select
+                  value={audioSound}
+                  onChange={(event) =>
+                    onAudioSoundChange(event.target.value as GameSoundSlot)
+                  }
+                  disabled={
+                    audioPreviewBusy || audioApplyBusy || audioRestoreBusy
+                  }
+                >
+                  {GAME_SOUND_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="audio-description-field">
+                <span>
+                  <strong>描述你想要的声音</strong>
+                  <small>{audioDescription.length}/300</small>
+                </span>
+                <input
+                  type="text"
+                  value={audioDescription}
+                  maxLength={AUDIO_DESCRIPTION_MAX_LENGTH}
+                  placeholder={GAME_SOUND_EXAMPLES[audioSound]}
+                  onChange={(event) =>
+                    onAudioDescriptionChange(event.target.value)
+                  }
+                  disabled={
+                    audioPreviewBusy || audioApplyBusy || audioRestoreBusy
+                  }
+                />
+                <small className={!audioDescription.trim() ? 'is-warning' : ''}>
+                  {audioDescription.trim()
+                    ? `示例：${GAME_SOUND_EXAMPLES[audioSound].replace(/^例如：/, '')}`
+                    : '请先描述你想要的声音，可以使用中文或英文。'}
+                </small>
+              </label>
+              <label className="audio-duration-field">
+                <span>
+                  <strong>音效时长</strong>
+                  <small>0.5～8 秒</small>
+                </span>
+                <select
+                  value={audioDurationSeconds}
+                  onChange={(event) =>
+                    onAudioDurationChange(
+                      Number(event.target.value) as AudioDurationSeconds,
+                    )
+                  }
+                  disabled={
+                    audioPreviewBusy || audioApplyBusy || audioRestoreBusy
+                  }
+                >
+                  {AUDIO_DURATION_OPTIONS.map((durationSeconds) => (
+                    <option key={durationSeconds} value={durationSeconds}>
+                      {durationSeconds ===
+                      AUDIO_RECOMMENDED_DURATION_BY_SOUND[audioSound]
+                        ? `${durationSeconds} 秒（推荐）`
+                        : `${durationSeconds} 秒`}
+                    </option>
+                  ))}
+                </select>
+                <small>切换声音用途时，会自动使用该用途的推荐时长。</small>
+              </label>
+              <div className="audio-source-state">
+                <span>当前使用</span>
+                <strong
+                  className={audioOverrides?.[audioSound] ? 'is-custom' : ''}
+                >
+                  {!project
+                    ? '未选择项目'
+                    : audioOverridesLoading
+                      ? '正在读取…'
+                      : audioOverrides?.[audioSound]
+                        ? 'AI 自定义音效'
+                        : '内置音效'}
+                </strong>
+                <button
+                  className="secondary-button"
+                  onClick={onRestoreProjectAudio}
+                  disabled={
+                    audioRestoreBusy ||
+                    audioApplyBusy ||
+                    audioPreviewBusy ||
+                    audioOverridesLoading ||
+                    !project ||
+                    !audioOverrides?.[audioSound]
+                  }
+                >
+                  {audioRestoreBusy ? (
+                    <LoaderCircle className="spin" size={14} />
+                  ) : (
+                    <RefreshCw size={14} />
+                  )}
+                  {audioRestoreBusy ? '正在恢复…' : '恢复内置音效'}
+                </button>
+              </div>
+              {audioSettingsDirty || !current.apiKeyConfigured ? (
+                <div className="audio-preview-requirement">
+                  请先保存当前 ElevenLabs 音频设置。
+                </div>
+              ) : null}
+              <button
+                className="secondary-button audio-preview-button"
+                onClick={onGenerateAudioPreview}
+                disabled={
+                  audioPreviewBusy ||
+                  audioApplyBusy ||
+                  audioSettingsDirty ||
+                  !audioDescription.trim() ||
+                  !current.apiKeyConfigured
+                }
+              >
+                {audioPreviewBusy ? (
+                  <LoaderCircle className="spin" size={15} />
+                ) : (
+                  <Volume2 size={15} />
+                )}
+                {audioPreviewBusy
+                  ? '正在生成 3 条候选音效…'
+                  : `生成 3 条 ${audioDurationSeconds} 秒候选（约 3 倍额度）`}
+              </button>
+              {audioPreviewBusy ? (
+                <div className="audio-generation-progress">
+                  <div className="audio-progress-heading">
+                    <strong>正在生成候选</strong>
+                    <span>
+                      已完成 {audioPreviewProgress?.completedCount ?? 0}/3
+                    </span>
+                  </div>
+                  <div
+                    className="audio-progress-track"
+                    role="progressbar"
+                    aria-valuemin={0}
+                    aria-valuemax={3}
+                    aria-valuenow={audioPreviewProgress?.completedCount ?? 0}
+                  >
+                    <span
+                      style={{
+                        width: `${((audioPreviewProgress?.completedCount ?? 0) / 3) * 100}%`,
+                      }}
+                    />
+                  </div>
+                  <div className="audio-progress-counts">
+                    <span>成功 {audioPreviewProgress?.successCount ?? 0}</span>
+                    <span>失败 {audioPreviewProgress?.failedCount ?? 0}</span>
+                  </div>
+                  <button
+                    className="secondary-button audio-stop-button"
+                    onClick={onCancelAudioPreview}
+                    disabled={audioStopBusy}
+                  >
+                    {audioStopBusy ? (
+                      <LoaderCircle className="spin" size={14} />
+                    ) : (
+                      <X size={14} />
+                    )}
+                    {audioStopBusy ? '正在停止' : '停止生成'}
+                  </button>
+                  <small>
+                    停止后本批候选全部作废；已经完成的请求可能已经消耗额度。
+                  </small>
+                </div>
+              ) : null}
+              {audioCandidates.length ? (
+                <div className="audio-preview-player">
+                  {audioBatchFailedCount ? (
+                    <div className="audio-batch-warning">
+                      <span>
+                        本次有 {audioBatchFailedCount} 条生成失败；已成功的 API
+                        候选会原样保留。
+                      </span>
+                      <button
+                        className="secondary-button audio-local-fill-button"
+                        onClick={onFillMissingAudioCandidates}
+                        disabled={audioApplyBusy || audioPreviewBusy}
+                      >
+                        本地补齐 {audioBatchFailedCount} 条（不消耗 API）
+                      </button>
+                    </div>
+                  ) : null}
+                  <div className="audio-candidate-grid">
+                    {audioCandidates.map((candidate) => {
+                      const selected =
+                        candidate.candidateNumber === selectedAudioCandidate;
+                      return (
+                        <section
+                          className={`audio-candidate-card ${selected ? 'is-selected' : ''} ${playingAudioCandidate === candidate.candidateNumber ? 'is-playing' : ''}`}
+                          key={candidate.candidateNumber}
+                        >
+                          <div>
+                            <strong>
+                              候选 {candidate.candidateNumber}
+                              <small
+                                className={`audio-candidate-origin ${candidate.provider === 'liimit-local' ? 'is-local' : ''}`}
+                              >
+                                {candidate.provider === 'liimit-local'
+                                  ? '本地备用'
+                                  : 'ElevenLabs'}
+                              </small>
+                            </strong>
+                            <span>
+                              {candidate.durationSeconds} 秒 ·{' '}
+                              {candidate.provider === 'liimit-local'
+                                ? '本机生成'
+                                : `${candidate.latencyMs} ms`}
+                              {playingAudioCandidate ===
+                              candidate.candidateNumber
+                                ? ' · 正在播放'
+                                : ''}
+                            </span>
+                          </div>
+                          <audio
+                            ref={candidateAudioRef(candidate.candidateNumber)}
+                            controls
+                            controlsList="nodownload noplaybackrate"
+                            preload="metadata"
+                            src={candidate.url}
+                            onPlay={() =>
+                              handleCandidatePlay(candidate.candidateNumber)
+                            }
+                            onPause={() =>
+                              handleCandidateStopped(candidate.candidateNumber)
+                            }
+                            onEnded={() =>
+                              handleCandidateStopped(candidate.candidateNumber)
+                            }
+                          >
+                            当前系统无法播放这个候选音效。
+                          </audio>
+                          <div className="audio-candidate-actions">
+                            <button
+                              className="secondary-button"
+                              onClick={() =>
+                                void replayCandidate(candidate.candidateNumber)
+                              }
+                              disabled={audioApplyBusy}
+                            >
+                              <RefreshCw size={14} />
+                              从头播放
+                            </button>
+                            <button
+                              className={
+                                selected ? 'primary-button' : 'secondary-button'
+                              }
+                              onClick={() =>
+                                onAudioCandidateSelect(
+                                  candidate.candidateNumber,
+                                )
+                              }
+                              disabled={audioApplyBusy}
+                              aria-pressed={selected}
+                            >
+                              {selected ? <CheckCircle2 size={14} /> : null}
+                              {selected ? '已选择' : '选择这条'}
+                            </button>
+                          </div>
+                        </section>
+                      );
+                    })}
+                  </div>
+                  {audioPlaybackError ? (
+                    <small className="audio-playback-error">
+                      {audioPlaybackError}
+                    </small>
+                  ) : null}
+                  {!selectedAudioCandidate ? (
+                    <small className="audio-candidate-requirement">
+                      请先试听并选择一条候选音效。
+                    </small>
+                  ) : null}
+                  <button
+                    className="primary-button audio-apply-button"
+                    onClick={onApplyAudioPreview}
+                    disabled={
+                      audioApplyBusy || !project || !selectedAudioCandidate
+                    }
+                  >
+                    {audioApplyBusy ? (
+                      <LoaderCircle className="spin" size={15} />
+                    ) : (
+                      <Save size={15} />
+                    )}
+                    {audioApplyBusy
+                      ? '正在应用并重新构建…'
+                      : selectedAudioCandidate
+                        ? `应用候选 ${selectedAudioCandidate} 到当前游戏`
+                        : '请先选择一条候选'}
+                  </button>
+                  {!project ? (
+                    <small className="audio-project-requirement">
+                      请先在左侧选择一个游戏项目。
+                    </small>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -907,7 +1799,13 @@ function ApiCallRow({ record }: { record: ApiUsageRecord }) {
         <span>{tokens} TOK</span>
       </div>
       <div className="api-call-meta">
-        <span>{record.source === 'connection-test' ? '测速' : 'Agent'}</span>
+        <span>
+          {record.source === 'connection-test'
+            ? '测速'
+            : record.source === 'asset'
+              ? '素材'
+              : 'Agent'}
+        </span>
         <time>{formatTimestamp(record.occurredAt)}</time>
       </div>
     </div>

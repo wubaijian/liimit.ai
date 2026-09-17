@@ -290,7 +290,7 @@ describe('可选 Agent 的界面门禁', () => {
       'const agentAvailable = canStartAgent(selected);',
     );
     expect(appSource).toMatch(
-      /disabled=\{\s*selected\.status === 'running' \|\| !agentAvailable\s*\}/,
+      /disabled=\{\s*selected\.status === 'running'\s*\|\|\s*creationPending\s*\|\|\s*!agentAvailable\s*\}/,
     );
     expect(appSource).toContain('disabled={!agentAvailable}');
   });

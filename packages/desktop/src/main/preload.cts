@@ -1,13 +1,17 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import type {
   AgentEvent,
+  ApplyAudioPreviewInput,
   AppSettings,
+  AudioPreviewProgress,
   CreateProjectInput,
   DependencyActionInput,
   DependencyOutput,
   GameAgentAPI,
   ImportSkillInput,
+  GenerateAudioPreviewInput,
   InstallGitHubSkillInput,
+  RestoreProjectAudioInput,
   McpServerDefinition,
   ProjectRecord,
   ProviderConnectionInput,
@@ -18,6 +22,7 @@ import type { PlayerAbilities } from '../shared/levelCampaign.js';
 import type { GameInfo } from '../shared/gameInfo.js';
 
 const api: GameAgentAPI = {
+  removeProject: (input) => ipcRenderer.invoke('project:remove', input),
   bootstrap: () => ipcRenderer.invoke('app:bootstrap'),
   chooseDirectory: () => ipcRenderer.invoke('dialog:choose-directory'),
   createProject: (input: CreateProjectInput) =>
@@ -28,13 +33,39 @@ const api: GameAgentAPI = {
     ipcRenderer.invoke('settings:save', settings),
   testProviderConnection: (input: ProviderConnectionInput) =>
     ipcRenderer.invoke('settings:test-provider', input),
+  generateAudioPreview: (input: GenerateAudioPreviewInput) =>
+    ipcRenderer.invoke('settings:generate-audio-preview', input),
+  cancelAudioPreviewGeneration: () =>
+    ipcRenderer.invoke('settings:cancel-audio-preview'),
+  onAudioPreviewProgress: (
+    callback: (progress: AudioPreviewProgress) => void,
+  ) => {
+    const listener = (
+      _event: IpcRendererEvent,
+      progress: AudioPreviewProgress,
+    ) => callback(progress);
+    ipcRenderer.on('settings:audio-preview-progress', listener);
+    return () =>
+      ipcRenderer.removeListener('settings:audio-preview-progress', listener);
+  },
+  applyAudioPreview: (input: ApplyAudioPreviewInput) =>
+    ipcRenderer.invoke('project:apply-audio-preview', input),
+  loadProjectAudioOverrides: (projectId: string) =>
+    ipcRenderer.invoke('project:audio-overrides', projectId),
+  restoreProjectAudio: (input: RestoreProjectAudioInput) =>
+    ipcRenderer.invoke('project:restore-audio', input),
   loadApiUsage: () => ipcRenderer.invoke('settings:api-usage'),
+  loadApiCosts: (projectId) => ipcRenderer.invoke('settings:api-costs', projectId),
+  saveApiCostSettings: (settings) => ipcRenderer.invoke('settings:save-api-costs', settings),
   inspectDependencies: () =>
     ipcRenderer.invoke('settings:inspect-dependencies'),
   runDependencyAction: (input: DependencyActionInput) =>
     ipcRenderer.invoke('settings:run-dependency-action', input),
   startAgent: (input: StartAgentInput) =>
     ipcRenderer.invoke('agent:start', input),
+  decideProposal: (
+    input: import('../shared/modificationProposal.js').ProposalDecisionInput,
+  ) => ipcRenderer.invoke('agent:proposal-decision', input),
   stopAgent: (projectId: string) => ipcRenderer.invoke('agent:stop', projectId),
   loadAgentHistory: (projectId: string) =>
     ipcRenderer.invoke('agent:history', projectId),

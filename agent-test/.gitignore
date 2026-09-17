@@ -13,6 +13,12 @@ dist/
 output/
 outputs/
 assets/
+!templates/core/public/
+!templates/core/public/assets/
+!templates/core/public/assets/audio/
+!templates/core/public/assets/audio/*.wav
+!templates/variants/*/public/assets/
+!templates/variants/*/public/assets/**
 
 # IDE
 .vscode/

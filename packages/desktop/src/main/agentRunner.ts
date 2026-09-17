@@ -26,6 +26,17 @@ import {
   type RuntimeMcpServerConfig,
 } from './mcpConfig.js';
 import { usageFromRuntimeResult, type ApiUsageInput } from './apiUsageStore.js';
+import { projectContentSnapshot } from './projectContentSnapshot.js';
+import type { ApiCostGateway } from './apiCostGateway.js';
+import type { CostSlot } from '../shared/apiCost.js';
+import {
+  AgentVerificationGuard,
+  verificationWorkflowInstructions,
+} from './agentVerificationGuard.js';
+import {
+  foundationGameIsReady,
+  readFoundationJson,
+} from './foundationValidation.js';
 
 const MAX_EVENT_TEXT = 12_000;
 const MAX_STDERR_TEXT = 4_000;
@@ -132,6 +143,7 @@ export interface PendingToolCall {
   id: string;
   name: string;
   outputDirName?: string;
+  input?: unknown;
 }
 
 /** Tracks tool calls in runtime execution order and completes them by ID. */
@@ -168,6 +180,10 @@ export class PendingToolTracker {
     return this.calls[0];
   }
 
+  hasAssetGeneration(): boolean {
+    return this.calls.some((call) => isGenerateAssetsTool(call.name));
+  }
+
   clear(): void {
     this.calls.length = 0;
   }
@@ -195,7 +211,15 @@ interface RunnerOptions {
   emitEvent: (event: AgentEvent) => void;
   emitProject: (project: ProjectRecord) => void;
   recordApiUsage?: (input: ApiUsageInput) => Promise<void>;
+  createCostMonitor?: (
+    projectId: string,
+    credentials: DesktopCredentialPayload,
+    onBlock: (reason: string) => void,
+    onWarning: (message: string) => void,
+  ) => Promise<ApiCostGateway>;
   spawnRuntime?: typeof spawn;
+  snapshotProject?: typeof projectContentSnapshot;
+  terminateRuntime?: typeof terminateProcessTreeWithEscalation;
 }
 
 interface RuntimeContentBlock {
@@ -230,6 +254,10 @@ interface RuntimeOutputMessage {
 }
 
 interface ActiveRunState {
+  costMonitor?: ApiCostGateway;
+  verificationGuard: AgentVerificationGuard;
+  guardStopped?: string;
+  initialContent?: string | null;
   projectId: string;
   child: ChildProcess;
   stoppedByUser: boolean;
@@ -369,14 +397,35 @@ export class AgentRunner {
     };
   }
 
-  async start(input: StartAgentInput): Promise<{ accepted: boolean }> {
+  assertCanStart(): void {
     if (this.active || this.controlledPhase) {
       throw new Error('已有 Agent 任务正在启动或运行，请先停止。');
     }
+    const settings = this.options.store.getRuntimeSettings();
+    if (!settings.main.apiKey)
+      throw new Error('请先在模型设置中填写或重新保存主 Agent API Key。');
+    if (!settings.main.baseUrl || !settings.main.model)
+      throw new Error('主 Agent 的 Base URL 和模型名称不能为空。');
+    if (settings.permissionMode !== 'yolo')
+      throw new Error('完整游戏工作流需要“完整自动化”执行权限。');
+    const runtime = this.inspectRuntime();
+    if (!runtime.ready) throw new Error(runtime.message);
+  }
+
+  isProjectBusy(projectId: string): boolean {
+    return (
+      this.active?.projectId === projectId ||
+      this.controlledPhase?.projectId === projectId
+    );
+  }
+
+  async start(input: StartAgentInput): Promise<{ accepted: boolean }> {
+    this.assertCanStart();
     const startPhase = createControlledPhase(input.projectId, 'preparing');
     this.controlledPhase = startPhase;
 
     let runningProject: ProjectRecord | undefined;
+    let costMonitor: ApiCostGateway | undefined;
     try {
       const project = this.options.store.getProject(input.projectId);
       if (!project) throw new Error('项目不存在。');
@@ -406,6 +455,10 @@ export class AgentRunner {
       runningProject = {
         ...project,
         prompt,
+        ...(project.initialGeneration &&
+        project.initialGeneration !== 'completed'
+          ? { initialGeneration: 'active' as const }
+          : {}),
         status: 'running',
         stage: input.resume ? project.stage : 'scaffold',
         updatedAt: new Date().toISOString(),
@@ -458,6 +511,42 @@ export class AgentRunner {
       }
 
       const env = this.buildEnvironment(runtime.extraEnv);
+      env.GAME_STARTER_TEMPLATE_ID = project.starterTemplateId ?? '';
+      const initialContent = await (
+        this.options.snapshotProject ?? projectContentSnapshot
+      )(projectIdentity.path);
+      const credentials = buildCredentialPayload(
+        settings,
+        productPolicy.mcpServers,
+      );
+      costMonitor = await this.options.createCostMonitor?.(
+        project.id,
+        credentials,
+        (reason) => {
+          const active = this.active;
+          if (active?.projectId === project.id)
+            this.stopForVerification(
+              this.options.store.getProject(project.id) ?? runningProject!,
+              active,
+              reason,
+            );
+        },
+        (message) =>
+          this.emit(
+            this.options.store.getProject(project.id) ?? runningProject!,
+            'lifecycle',
+            '费用提醒',
+            message,
+          ),
+      );
+      if (startPhase.controller.signal.aborted) throw new Error('启动已停止。');
+      if (costMonitor) {
+        credentials.main.baseUrl = costMonitor.baseUrl('main');
+        for (const [slot, endpoint] of Object.entries(credentials.providers)) {
+          if (endpoint)
+            endpoint.baseUrl = costMonitor.baseUrl(slot as CostSlot);
+        }
+      }
       const child = (this.options.spawnRuntime ?? spawn)(
         runtime.command,
         args,
@@ -478,6 +567,9 @@ export class AgentRunner {
         runLivenessPolicyFromEnv(process.env),
       );
       this.active = {
+        costMonitor,
+        verificationGuard: new AgentVerificationGuard(),
+        initialContent,
         projectId: project.id,
         child,
         stoppedByUser: false,
@@ -496,6 +588,7 @@ export class AgentRunner {
       );
       this.active.monitor.unref();
       this.activeSecrets = collectSecrets(settings, productPolicy.mcpServers);
+      this.activeSecrets.push(...(costMonitor?.redactions() ?? []));
 
       let parseChain: Promise<void> = Promise.resolve();
       const queue = (task: () => Promise<void>) => {
@@ -587,6 +680,24 @@ export class AgentRunner {
           await parseChain;
           const active = this.active?.child === child ? this.active : null;
           if (active?.monitor) clearInterval(active.monitor);
+          try {
+            await costMonitor?.close(
+              active?.guardStopped ||
+                (active?.stoppedByUser
+                  ? '用户停止任务。'
+                  : active?.timedOut
+                    ? '任务超时。'
+                    : code !== 0
+                      ? '任务异常退出。'
+                      : ''),
+            );
+          } catch {
+            if (active) {
+              active.guardStopped =
+                '费用记录保存失败，任务已停止；请先核对服务商账单。';
+              active.reportedCompletion = undefined;
+            }
+          }
           if (active) this.active = null;
           const latest =
             this.options.store.getProject(project.id) ?? runningProject!;
@@ -606,12 +717,11 @@ export class AgentRunner {
         });
         throw new Error('无法创建 Agent 凭据通道。');
       }
-      credentialPipe.end(
-        JSON.stringify(
-          buildCredentialPayload(settings, productPolicy.mcpServers),
-        ),
+      credentialPipe.end(JSON.stringify(credentials));
+      child.stdin?.end(
+        initialCreationPrompt(project, prompt) +
+          verificationWorkflowInstructions(projectIdentity.path),
       );
-      child.stdin?.end(prompt);
       this.emit(runningProject, 'user', '用户指令', prompt);
       this.emit(
         runningProject,
@@ -621,6 +731,7 @@ export class AgentRunner {
       );
       return { accepted: true };
     } catch (error) {
+      await costMonitor?.close('任务启动未完成。').catch(() => undefined);
       if (startPhase.stoppedByUser) {
         if (runningProject && !this.active) {
           this.emit(
@@ -661,7 +772,11 @@ export class AgentRunner {
     if (this.active?.projectId === projectId) {
       this.active.stoppedByUser = true;
       const child = this.active.child;
-      await terminateProcessTreeWithEscalation(child);
+      try {
+        await this.active.costMonitor?.close('用户停止任务。');
+      } finally {
+        await terminateProcessTreeWithEscalation(child);
+      }
     }
   }
 
@@ -680,10 +795,18 @@ export class AgentRunner {
     if (!active || active.projectId !== projectId || active.child !== child)
       return;
     const latest = this.options.store.getProject(projectId);
-    if (!latest) return;
+    if (!latest || active.guardStopped || active.stoppedByUser) return;
     this.syncAssetProgress(latest);
     const currentTool = active.pendingTools.current();
     const generatingAssets = isGenerateAssetsTool(currentTool?.name);
+    const verificationStop = active.verificationGuard.inspect(
+      Date.now(),
+      active.pendingTools.hasAssetGeneration(),
+    );
+    if (verificationStop) {
+      this.stopForVerification(latest, active, verificationStop);
+      return;
+    }
 
     if (generatingAssets && active.assetProgress) {
       const progress = inspectAssetProgress(
@@ -778,6 +901,8 @@ export class AgentRunner {
     }
 
     const latest = this.options.store.getProject(project.id) ?? project;
+    if (this.active?.projectId === project.id && this.active.guardStopped)
+      return;
     if (
       typeof message.session_id === 'string' &&
       message.session_id !== latest.sessionId
@@ -841,14 +966,34 @@ export class AgentRunner {
           this.syncAssetProgress(latest);
         }
         const text = summarizeToolResult(block.content);
+        const active =
+          this.active?.projectId === latest.id ? this.active : undefined;
+        const observed = active?.verificationGuard.observe({
+          id: block.tool_use_id,
+          tool: completedTool?.name,
+          input: completedTool?.input,
+          text: toolResultDetectionText(block.content),
+          isError: block.is_error,
+        });
+        const failed = observed?.failed || Boolean(block.is_error);
         this.emit(
           latest,
           'tool_result',
-          block.is_error ? '工具执行失败' : '工具执行完成',
-          text,
+          failed ? '工具执行失败' : '工具执行完成',
+          observed?.failed
+            ? `${observed.explanation}\n同类失败 ${observed.count}/3 次。\n\n${text}`
+            : text,
           completedTool?.name,
-          Boolean(block.is_error),
+          failed,
         );
+        if (observed?.stop && active) {
+          this.stopForVerification(
+            latest,
+            active,
+            `${observed.explanation}\n同类工具错误已累计 3 次，已停止本轮以避免继续消耗 API。文件和会话已保留，但本轮尚未完成验证；请先检查失败原因，再决定是否继续。`,
+          );
+          return;
+        }
       }
       return;
     }
@@ -907,7 +1052,7 @@ export class AgentRunner {
         this.emit(
           verificationProject,
           'lifecycle',
-          'Agent 已报告生成完成',
+          'Agent 本轮回复已结束',
           '正在等待 Runtime 正常退出；退出后 liimit.ai 会重新执行受控构建并校验当前 Web 入口。',
         );
       }
@@ -920,13 +1065,14 @@ export class AgentRunner {
   ): Promise<void> {
     const toolName = String(block.name ?? 'unknown');
     if (this.active?.projectId === project.id) {
-      this.active.pendingTools.add(
+      const tracked = this.active.pendingTools.add(
         toolName,
         block.id,
         isGenerateAssetsTool(toolName)
           ? assetOutputDirFromInput(block.input)
           : undefined,
       );
+      tracked.input = block.input;
       this.syncAssetProgress(project);
     }
     const matched = TOOL_STAGE.find(([pattern]) => pattern.test(toolName));
@@ -969,6 +1115,39 @@ export class AgentRunner {
       outputDirName,
       snapshot: inspectAssetProgress(project.path, outputDirName),
     };
+  }
+
+  private stopForVerification(
+    project: ProjectRecord,
+    active: ActiveRunState,
+    reason: string,
+  ): void {
+    if (active.guardStopped || active.stoppedByUser || active.timedOut) return;
+    active.guardStopped = reason;
+    void active.costMonitor?.close(reason).catch(() => undefined);
+    active.reportedCompletion = undefined;
+    if (active.monitor) clearInterval(active.monitor);
+    active.monitor = null;
+    this.emit(
+      project,
+      'error',
+      '检查遇到问题，已自动停止',
+      reason,
+      undefined,
+      true,
+    );
+    void (this.options.terminateRuntime ?? terminateProcessTreeWithEscalation)(
+      active.child,
+    ).catch(() => {
+      this.emit(
+        project,
+        'error',
+        '停止进程未完成',
+        '请点击停止任务或关闭应用；当前内容未标记为完成。',
+        undefined,
+        true,
+      );
+    });
   }
 
   private buildEnvironment(
@@ -1015,6 +1194,10 @@ export class AgentRunner {
       await this.finishProject(latest, 'failed');
       return;
     }
+    if (active?.guardStopped) {
+      await this.finishProject(latest, 'waiting');
+      return;
+    }
     if (code !== 0) {
       if (latest.status !== 'failed') {
         this.emit(
@@ -1058,6 +1241,47 @@ export class AgentRunner {
         '正在执行受控最终构建',
         'liimit.ai 正在用固定模板的锁定依赖重新构建当前源码，防止把上一次的旧 dist 误当成本次结果。',
       );
+      const finalContent = await (
+        this.options.snapshotProject ?? projectContentSnapshot
+      )(verificationProject.path);
+      if (
+        !active.initialContent ||
+        !finalContent ||
+        active.initialContent === finalContent
+      ) {
+        const unchanged = Boolean(active.initialContent && finalContent);
+        this.emit(
+          verificationProject,
+          'lifecycle',
+          unchanged ? '本轮未产生游戏修改' : '未能核验游戏修改',
+          `${unchanged ? '游戏文件内容未变化；本轮回复不代表生成或修改完成。' : '无法核验本轮文件变化，未标记为完成。'}\n\n${active.reportedCompletion.summary}`,
+        );
+        await this.finishProject(verificationProject, 'waiting');
+        return;
+      }
+      if (
+        verificationProject.starterTemplateId === 'ai-foundation' &&
+        verificationProject.initialGeneration !== 'completed'
+      ) {
+        const [baseline, campaign, info] = await Promise.all([
+          readFoundationJson(
+            this.options.projects.locationsInfo.templatesDir,
+            'variants/ai-foundation/src/levels.json',
+          ),
+          readFoundationJson(verificationProject.path, 'src/levels.json'),
+          readFoundationJson(verificationProject.path, 'src/gameInfo.json'),
+        ]);
+        if (!foundationGameIsReady(baseline, campaign, info)) {
+          this.emit(
+            verificationProject,
+            'lifecycle',
+            '游戏内容尚未生成',
+            '当前仍是基础工作区，或者只修改了名称、测试等辅助内容，不能算游戏创建完成。请继续按要求制作关卡和玩法。',
+          );
+          await this.finishProject(verificationProject, 'waiting');
+          return;
+        }
+      }
       await this.options.projects.buildFixedProject(
         verificationProject,
         finalization.controller.signal,
@@ -1070,7 +1294,7 @@ export class AgentRunner {
         verificationProject,
         'lifecycle',
         '最终构建已通过',
-        '正在校验新生成的 HTML 和本地 JavaScript 入口。',
+        '正在通过平台正式试玩服务核验页面、脚本、关卡和游戏信息；这些检查不等于已经实际玩通。',
       );
       await this.options.projects.verifyPlayableBuild(
         verificationProject,
@@ -1082,8 +1306,8 @@ export class AgentRunner {
       this.emit(
         verificationProject,
         'complete',
-        '游戏生成完成',
-        `当前源码的受控构建和本地 Web 入口校验已通过。\n\n${active.reportedCompletion.summary}`,
+        '游戏文件已更新并通过运行检查',
+        `当前源码的受控构建、Web 入口与关卡数据读取已通过；游戏是否能顺利玩通，仍需实际试玩确认。\n\n${active.reportedCompletion.summary}`,
       );
       await this.finishProject(verificationProject, 'completed');
     } catch (error) {
@@ -1154,6 +1378,14 @@ export class AgentRunner {
     const finished: ProjectRecord = {
       ...latest,
       status,
+      ...(latest.initialGeneration && latest.initialGeneration !== 'completed'
+        ? {
+            initialGeneration:
+              status === 'completed'
+                ? ('completed' as const)
+                : ('incomplete' as const),
+          }
+        : {}),
       stage: status === 'completed' ? 'complete' : latest.stage,
       updatedAt: new Date().toISOString(),
     };
@@ -1164,6 +1396,23 @@ export class AgentRunner {
     await this.options.store.upsertProject(project);
     this.options.emitProject(project);
   }
+}
+
+export function initialCreationPrompt(
+  project: ProjectRecord,
+  prompt: string,
+): string {
+  if (
+    project.creationMode !== 'ai' ||
+    project.sessionId ||
+    !project.initialGeneration ||
+    project.initialGeneration === 'completed'
+  )
+    return prompt;
+  if (project.starterTemplateId === 'ai-foundation') {
+    return `【liimit.ai 首次自主创建】\n用户已授权按下列要求创建新游戏。现有内容只是中性校准工作区，不是示例游戏也不是交付成果。请先读 src/AI_CREATION.md，按要求设计并写入全新的关卡布局、规则和画面。不要复制固定示例，不要先修测试框架；遇到不能实现的要求明确说明并等待确认。完成后列出实际完成项和未完成项。\n\n用户要求：\n${prompt}`;
+  }
+  return `【liimit.ai 首次创建任务】\n用户已选择“AI 生成”并提交以下要求，授权在这个新建项目内完成游戏。目录内现有模板是系统自动准备的起点，不是已经交付的用户游戏。请按要求实际调整关卡、规则与所需内容并保存、验证，不要只返回模板或停在修改方案。此授权仅适用于本次首次创建要求；不覆盖用户随后手工修改的内容，不扩大范围。若缺少能力、服务或有关键歧义，请明确说明并等待用户决定，不得声称未做的内容已完成。完成后说明实际完成内容和未完成项。\n\n用户要求：\n${prompt}`;
 }
 
 export function isRuntimeFailure(
@@ -1272,6 +1521,25 @@ function compactToolInput(input: unknown): string {
     2,
   );
   return truncate(compact, 3000);
+}
+
+function toolResultDetectionText(content: unknown): string {
+  const raw =
+    typeof content === 'string'
+      ? content
+      : Array.isArray(content)
+        ? content
+            .map((item) =>
+              item && typeof item === 'object' && 'text' in item
+                ? String(item.text)
+                : '',
+            )
+            .join('\n')
+        : JSON.stringify(content ?? '');
+  // Keep the tail: exit codes and stack traces often follow long build output.
+  return raw.length > 100_000
+    ? raw.slice(0, 50_000) + '\n' + raw.slice(-50_000)
+    : raw;
 }
 
 function summarizeToolResult(content: unknown): string {

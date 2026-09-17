@@ -25,6 +25,25 @@ describe('试玩消息检查', () => {
     { type: 'position', x: 128, y: 560 },
     { type: 'jumped', x: 160, y: 540 },
     { type: 'coin-collected', objectId: 'coin-1', x: 416, y: 512 },
+    { type: 'keycard-collected', objectId: 'keycard-1', x: 512, y: 480 },
+    {
+      type: 'security-door-unlocked',
+      objectId: 'security-door-1',
+      x: 640,
+      y: 480,
+    },
+    {
+      type: 'floor-switch-activated',
+      objectId: 'switch-1',
+      x: 720,
+      y: 560,
+    },
+    {
+      type: 'laser-gate-disabled',
+      objectId: 'laser-gate-1',
+      x: 1_280,
+      y: 560,
+    },
     { type: 'died', objectId: 'spike-1', x: 640, y: 624 },
     { type: 'completed', x: 2_240, y: 560 },
     {
@@ -174,6 +193,63 @@ describe('人工试玩报告汇总', () => {
       automationAction: 'idle',
     });
     expect(getPlaytestElapsedMs(report)).toBe(2_500);
+  });
+
+  it('记录本次试玩拿到的门卡和打开的安全门', () => {
+    let report = reducePlaytestReport(
+      createEmptyPlaytestReport(),
+      { type: 'started', x: 96, y: 560, totalCoins: 0 },
+      1_000,
+    );
+    report = reducePlaytestReport(
+      report,
+      { type: 'keycard-collected', objectId: 'keycard-1', x: 512, y: 480 },
+      1_500,
+    );
+    report = reducePlaytestReport(
+      report,
+      {
+        type: 'security-door-unlocked',
+        objectId: 'security-door-1',
+        x: 640,
+        y: 480,
+      },
+      1_600,
+    );
+
+    expect(report.collectedKeycardIds).toEqual(['keycard-1']);
+    expect(report.unlockedSecurityDoorIds).toEqual(['security-door-1']);
+  });
+
+  it('记录本次试玩启动的开关和关闭的激光门', () => {
+    let report = reducePlaytestReport(
+      createEmptyPlaytestReport(),
+      { type: 'started', x: 96, y: 560, totalCoins: 0 },
+      1_000,
+    );
+    report = reducePlaytestReport(
+      report,
+      {
+        type: 'floor-switch-activated',
+        objectId: 'switch-1',
+        x: 720,
+        y: 560,
+      },
+      1_500,
+    );
+    report = reducePlaytestReport(
+      report,
+      {
+        type: 'laser-gate-disabled',
+        objectId: 'laser-gate-1',
+        x: 1_280,
+        y: 560,
+      },
+      1_600,
+    );
+
+    expect(report.activatedFloorSwitchIds).toEqual(['switch-1']);
+    expect(report.disabledLaserGateIds).toEqual(['laser-gate-1']);
   });
 
   it('空报告的用时为零且收到早于开始的时间也不会产生负数', () => {

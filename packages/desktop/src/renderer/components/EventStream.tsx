@@ -8,7 +8,7 @@ import {
   Wrench,
   UserRound,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { AgentEvent, ProjectRecord } from '../../shared/types';
 
 interface EventStreamProps {
@@ -16,6 +16,7 @@ interface EventStreamProps {
   events: AgentEvent[];
   liveText: string;
   history: EventHistoryState;
+  children?: ReactNode;
 }
 
 export interface EventHistoryState {
@@ -30,131 +31,162 @@ export function EventStream({
   events,
   liveText,
   history,
+  children,
 }: EventStreamProps) {
   const streamRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const followRef = useRef(true);
+  const [awayFromLatest, setAwayFromLatest] = useState(false);
+
+  function jumpToLatest() {
+    const stream = streamRef.current;
+    if (!stream) return;
+    followRef.current = true;
+    setAwayFromLatest(false);
+    stream.scrollTop = stream.scrollHeight;
+  }
 
   useEffect(() => {
     const stream = streamRef.current;
-    if (!stream) return;
+    if (!stream || !followRef.current) return;
 
     const frame = requestAnimationFrame(() => {
       stream.scrollTop = stream.scrollHeight;
     });
 
     return () => cancelAnimationFrame(frame);
-  }, [events.length, liveText, project.id]);
+  }, [events.length, liveText, project.id, children]);
 
   return (
-    <div className="event-stream" ref={streamRef}>
-      <article className="brief-card">
-        <div className="brief-number">01 / BRIEF</div>
-        <h2>{project.name}</h2>
-        <p>{project.prompt}</p>
-        <div className="brief-meta">
-          <span>{project.path}</span>
-          <time>{new Date(project.createdAt).toLocaleString('zh-CN')}</time>
-        </div>
-      </article>
-
-      {history.loading ? (
-        <div className="history-note is-loading">
-          <span className="pulse-dot" /> 正在载入 Agent 历史记录…
-        </div>
-      ) : null}
-
-      {!history.loading && events.length > 0 ? (
-        <div className="history-note">
-          {history.source === 'recording'
-            ? `已从 Agent 会话恢复 ${events.length} 条历史记录`
-            : `已载入 ${events.length} 条本地历史记录`}
-          {history.hasMore ? ' · 当前显示最近 500 条' : ''}
-        </div>
-      ) : null}
-
-      {!history.loading && events.length === 0 && !liveText ? (
-        <div className="stream-idle">
-          <CircleDot size={22} />
-          <strong>
-            {history.error
-              ? '历史记录载入失败'
-              : project.status === 'draft' && !project.sessionId
-                ? 'Agent 等待启动'
-                : '暂无可显示的历史记录'}
-          </strong>
-          <p>
-            {history.error
-              ? history.error
-              : project.status === 'draft' && !project.sessionId
-                ? '启动后，这里会逐步展示思考、工具调用、文件写入和构建结果。'
-                : '这个项目已有会话，但尚未找到可恢复的本地事件。继续执行后，新记录会自动保存。'}
-          </p>
-        </div>
-      ) : null}
-
-      {events.map((event) => {
-        const presentation = eventPresentation(event);
-        const Icon = presentation.icon;
-        const isLong = event.message.length > 460;
-        const isExpanded = expanded[event.id];
-        return (
-          <article
-            className={`event-row event-${event.type} ${event.isError ? 'is-error' : ''}`}
-            key={event.id}
-          >
-            <div className="event-rail">
-              <span>
-                <Icon size={14} />
-              </span>
-            </div>
-            <div className="event-body">
-              <header>
-                <div>
-                  <span className="event-kind">{presentation.label}</span>
-                  <strong>{event.title}</strong>
-                </div>
-                <time>
-                  {new Date(event.timestamp).toLocaleTimeString('zh-CN', {
-                    hour12: false,
-                  })}
-                </time>
-              </header>
-              {event.toolName ? (
-                <code className="tool-name">{event.toolName}</code>
-              ) : null}
-              <pre className={isLong && !isExpanded ? 'is-collapsed' : ''}>
-                {event.message}
-              </pre>
-              {isLong ? (
-                <button
-                  className="expand-event"
-                  onClick={() =>
-                    setExpanded((value) => ({
-                      ...value,
-                      [event.id]: !isExpanded,
-                    }))
-                  }
-                >
-                  <ChevronDown
-                    size={13}
-                    className={isExpanded ? 'is-rotated' : ''}
-                  />
-                  {isExpanded ? '收起' : '展开完整内容'}
-                </button>
-              ) : null}
-            </div>
-          </article>
-        );
-      })}
-
-      {liveText ? (
-        <article className="live-response">
-          <div className="live-header">
-            <span className="pulse-dot" /> Agent 正在输出
+    <div className="conversation-pane">
+      <div
+        className="event-stream"
+        ref={streamRef}
+        tabIndex={0}
+        aria-label="AI 对话记录"
+        onScroll={() => {
+          const stream = streamRef.current;
+          if (!stream) return;
+          const nearBottom =
+            stream.scrollHeight - stream.scrollTop - stream.clientHeight < 64;
+          followRef.current = nearBottom;
+          setAwayFromLatest(!nearBottom);
+        }}
+      >
+        <details className="brief-card">
+          <summary>项目需求 · {project.name}</summary>
+          <p>{project.prompt}</p>
+          <div className="brief-meta">
+            <span>{project.path}</span>
+            <time>{new Date(project.createdAt).toLocaleString('zh-CN')}</time>
           </div>
-          <pre>{liveText}</pre>
-        </article>
-      ) : null}
+        </details>
+
+        {history.loading ? (
+          <div className="history-note is-loading">
+            <span className="pulse-dot" /> 正在载入 Agent 历史记录…
+          </div>
+        ) : null}
+
+        {!history.loading && events.length > 0 ? (
+          <div className="history-note">
+            {history.source === 'recording'
+              ? `已从 Agent 会话恢复 ${events.length} 条历史记录`
+              : `已载入 ${events.length} 条本地历史记录`}
+            {history.hasMore ? ' · 当前显示最近 500 条' : ''}
+          </div>
+        ) : null}
+
+        {!history.loading && events.length === 0 && !liveText ? (
+          <div className="stream-idle">
+            <CircleDot size={22} />
+            <strong>
+              {history.error
+                ? '历史记录载入失败'
+                : project.status === 'draft' && !project.sessionId
+                  ? 'Agent 等待启动'
+                  : '暂无可显示的历史记录'}
+            </strong>
+            <p>
+              {history.error
+                ? history.error
+                : project.status === 'draft' && !project.sessionId
+                  ? '启动后，这里会逐步展示思考、工具调用、文件写入和构建结果。'
+                  : '这个项目已有会话，但尚未找到可恢复的本地事件。继续执行后，新记录会自动保存。'}
+            </p>
+          </div>
+        ) : null}
+
+        {events.map((event) => {
+          const presentation = eventPresentation(event);
+          const Icon = presentation.icon;
+          const isLong = event.message.length > 460;
+          const isExpanded = expanded[event.id];
+          return (
+            <article
+              className={`event-row event-${event.type} ${event.isError ? 'is-error' : ''}`}
+              key={event.id}
+            >
+              <div className="event-rail">
+                <span>
+                  <Icon size={14} />
+                </span>
+              </div>
+              <div className="event-body">
+                <header>
+                  <div>
+                    <span className="event-kind">{presentation.label}</span>
+                    <strong>{event.title}</strong>
+                  </div>
+                  <time>
+                    {new Date(event.timestamp).toLocaleTimeString('zh-CN', {
+                      hour12: false,
+                    })}
+                  </time>
+                </header>
+                {event.toolName ? (
+                  <code className="tool-name">{event.toolName}</code>
+                ) : null}
+                <pre className={isLong && !isExpanded ? 'is-collapsed' : ''}>
+                  {event.message}
+                </pre>
+                {isLong ? (
+                  <button
+                    className="expand-event"
+                    onClick={() =>
+                      setExpanded((value) => ({
+                        ...value,
+                        [event.id]: !isExpanded,
+                      }))
+                    }
+                  >
+                    <ChevronDown
+                      size={13}
+                      className={isExpanded ? 'is-rotated' : ''}
+                    />
+                    {isExpanded ? '收起' : '展开完整内容'}
+                  </button>
+                ) : null}
+              </div>
+            </article>
+          );
+        })}
+
+        {liveText ? (
+          <article className="live-response">
+            <div className="live-header">
+              <span className="pulse-dot" /> Agent 正在输出
+            </div>
+            <pre>{liveText}</pre>
+          </article>
+        ) : null}
+        {children}
+      </div>
+      {awayFromLatest && (
+        <button className="jump-to-latest" onClick={jumpToLatest}>
+          回到最新 <ChevronDown size={14} />
+        </button>
+      )}
     </div>
   );
 }

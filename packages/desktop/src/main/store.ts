@@ -4,6 +4,7 @@ import path from 'node:path';
 import {
   STARTER_PREPARATION_MESSAGE_MAX_LENGTH,
   STARTER_PREPARATION_SCHEMA_VERSION,
+  isStarterTemplateId,
   isFixedProductMode,
   type AppSettings,
   type McpServerDefinition,
@@ -249,6 +250,17 @@ export class StateStore {
       if (index >= 0) projects[index] = project;
       else projects.push(project);
       return { ...state, projects };
+    });
+  }
+
+  async removeProject(projectId: string): Promise<void> {
+    await this.updateState((state) => {
+      if (!state.projects.some((project) => project.id === projectId))
+        throw new Error('项目不存在或已移除。');
+      return {
+        ...state,
+        projects: state.projects.filter((project) => project.id !== projectId),
+      };
     });
   }
 
@@ -609,8 +621,31 @@ function assertProjectRecord(value: unknown, index: number): void {
       invalidState(`projects[${index}].${field} 必须是字符串`);
     }
   }
+  if (
+    hasOwn(value, 'starterTemplateId') &&
+    !isStarterTemplateId(value.starterTemplateId)
+  ) {
+    invalidState(`projects[${index}].starterTemplateId 值无效`);
+  }
   if (hasOwn(value, 'starterPreparation')) {
     assertStarterPreparation(value.starterPreparation, index);
+  }
+  if (
+    hasOwn(value, 'creationMode') &&
+    (typeof value.creationMode !== 'string' ||
+      !['template', 'ai'].includes(value.creationMode))
+  ) {
+    invalidState(`projects[${index}].creationMode 值无效`);
+  }
+  if (
+    hasOwn(value, 'initialGeneration') &&
+    (value.creationMode !== 'ai' ||
+      typeof value.initialGeneration !== 'string' ||
+      !['pending', 'active', 'incomplete', 'completed'].includes(
+        value.initialGeneration,
+      ))
+  ) {
+    invalidState(`projects[${index}].initialGeneration 值无效`);
   }
 }
 
@@ -734,15 +769,27 @@ function normalizeInterruptedProject(
 ): PersistedProjectRecord & ProjectRecord {
   const agentWasInterrupted =
     project.status === 'running' || project.status === 'waiting';
+  const initialWasInterrupted =
+    project.initialGeneration === 'pending' ||
+    project.initialGeneration === 'active';
   const preparation = project.starterPreparation;
   const preparationWasInterrupted =
     preparation?.status === 'queued' || preparation?.status === 'preparing';
 
-  if (!agentWasInterrupted && !preparationWasInterrupted) return project;
+  if (
+    !agentWasInterrupted &&
+    !preparationWasInterrupted &&
+    !initialWasInterrupted
+  )
+    return project;
 
   return {
     ...project,
-    status: agentWasInterrupted ? 'stopped' : project.status,
+    status:
+      agentWasInterrupted || initialWasInterrupted ? 'stopped' : project.status,
+    ...(initialWasInterrupted
+      ? { initialGeneration: 'incomplete' as const }
+      : {}),
     updatedAt: now,
     ...(preparationWasInterrupted
       ? {

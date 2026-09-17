@@ -7,6 +7,10 @@ export interface PlaytestBotObject {
     | 'slime'
     | 'bee'
     | 'coin'
+    | 'keycard'
+    | 'security-door'
+    | 'floor-switch'
+    | 'laser-gate'
     | 'checkpoint'
     | 'goal'
     | 'pit';

@@ -3,7 +3,7 @@
   "levels": [
     {
       "id": "level-1",
-      "name": "第 1 关",
+      "name": "第 1 关 · 岩浆边缘",
       "abilities": {
         "moveSpeed": 240,
         "jumpPower": 620,
@@ -12,12 +12,12 @@
       },
       "document": {
         "version": 1,
-        "width": 2400,
+        "width": 2624,
         "height": 720,
         "gridSize": 32,
         "objects": [
           {
-            "id": "player-spawn",
+            "id": "l1-spawn",
             "type": "player-spawn",
             "x": 96,
             "y": 560,
@@ -25,33 +25,641 @@
             "height": 64
           },
           {
-            "id": "ground",
+            "id": "l1-ground",
             "type": "platform",
             "x": 0,
             "y": 656,
-            "width": 2400,
+            "width": 2624,
             "height": 64
           },
           {
-            "id": "first-spike",
+            "id": "l1-pit-a",
+            "type": "pit",
+            "x": 720,
+            "y": 656,
+            "width": 160,
+            "height": 64
+          },
+          {
+            "id": "l1-pit-b",
+            "type": "pit",
+            "x": 1712,
+            "y": 656,
+            "width": 192,
+            "height": 64
+          },
+          {
+            "id": "l1-platform-a",
+            "type": "platform",
+            "x": 320,
+            "y": 528,
+            "width": 192,
+            "height": 32
+          },
+          {
+            "id": "l1-platform-b",
+            "type": "platform",
+            "x": 928,
+            "y": 544,
+            "width": 192,
+            "height": 32
+          },
+          {
+            "id": "l1-platform-c",
+            "type": "platform",
+            "x": 1376,
+            "y": 496,
+            "width": 224,
+            "height": 32
+          },
+          {
+            "id": "l1-platform-d",
+            "type": "platform",
+            "x": 1952,
+            "y": 528,
+            "width": 192,
+            "height": 32
+          },
+          {
+            "id": "l1-moving-a",
+            "type": "moving-platform",
+            "x": 736,
+            "y": 536,
+            "width": 128,
+            "height": 24,
+            "movement": { "axis": "horizontal", "distance": 240, "speed": 140 }
+          },
+          {
+            "id": "l1-spike-a",
             "type": "spike",
-            "x": 640,
+            "x": 576,
             "y": 624,
             "width": 32,
             "height": 32
           },
           {
-            "id": "first-coin",
-            "type": "coin",
-            "x": 416,
-            "y": 512,
+            "id": "l1-spike-b",
+            "type": "spike",
+            "x": 1632,
+            "y": 624,
             "width": 32,
             "height": 32
           },
           {
-            "id": "goal",
+            "id": "l1-crystal-a",
+            "type": "coin",
+            "x": 400,
+            "y": 480,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "l1-crystal-b",
+            "type": "coin",
+            "x": 784,
+            "y": 496,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "l1-crystal-c",
+            "type": "coin",
+            "x": 1008,
+            "y": 496,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "l1-crystal-d",
+            "type": "coin",
+            "x": 1472,
+            "y": 448,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "l1-crystal-e",
+            "type": "coin",
+            "x": 2032,
+            "y": 480,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "l1-checkpoint",
+            "type": "checkpoint",
+            "x": 1248,
+            "y": 560,
+            "width": 48,
+            "height": 96
+          },
+          {
+            "id": "l1-goal",
             "type": "goal",
+            "x": 2464,
+            "y": 560,
+            "width": 64,
+            "height": 96
+          }
+        ]
+      }
+    },
+    {
+      "id": "level-2",
+      "name": "第 2 关 · 熔炉桥梁",
+      "abilities": {
+        "moveSpeed": 250,
+        "jumpPower": 630,
+        "doubleJumpEnabled": true,
+        "doubleJumpPower": 570
+      },
+      "document": {
+        "version": 1,
+        "width": 3264,
+        "height": 720,
+        "gridSize": 32,
+        "objects": [
+          {
+            "id": "l2-spawn",
+            "type": "player-spawn",
+            "x": 96,
+            "y": 560,
+            "width": 48,
+            "height": 64
+          },
+          {
+            "id": "l2-ground",
+            "type": "platform",
+            "x": 0,
+            "y": 656,
+            "width": 3264,
+            "height": 64
+          },
+          {
+            "id": "l2-pit-a",
+            "type": "pit",
+            "x": 640,
+            "y": 656,
+            "width": 224,
+            "height": 64
+          },
+          {
+            "id": "l2-pit-b",
+            "type": "pit",
+            "x": 1856,
+            "y": 656,
+            "width": 288,
+            "height": 64
+          },
+          {
+            "id": "l2-platform-a",
+            "type": "platform",
+            "x": 320,
+            "y": 528,
+            "width": 192,
+            "height": 32
+          },
+          {
+            "id": "l2-platform-b",
+            "type": "platform",
+            "x": 960,
+            "y": 512,
+            "width": 224,
+            "height": 32
+          },
+          {
+            "id": "l2-platform-c",
+            "type": "platform",
+            "x": 1376,
+            "y": 464,
+            "width": 192,
+            "height": 32
+          },
+          {
+            "id": "l2-platform-d",
+            "type": "platform",
+            "x": 2208,
+            "y": 496,
+            "width": 224,
+            "height": 32
+          },
+          {
+            "id": "l2-platform-e",
+            "type": "platform",
+            "x": 2688,
+            "y": 544,
+            "width": 192,
+            "height": 32
+          },
+          {
+            "id": "l2-moving-a",
+            "type": "moving-platform",
+            "x": 688,
+            "y": 520,
+            "width": 144,
+            "height": 24,
+            "movement": { "axis": "horizontal", "distance": 220, "speed": 125 }
+          },
+          {
+            "id": "l2-moving-b",
+            "type": "moving-platform",
+            "x": 1920,
+            "y": 464,
+            "width": 160,
+            "height": 24,
+            "movement": { "axis": "vertical", "distance": 180, "speed": 105 }
+          },
+          {
+            "id": "l2-moving-c",
+            "type": "moving-platform",
+            "x": 2464,
+            "y": 464,
+            "width": 144,
+            "height": 24,
+            "movement": { "axis": "horizontal", "distance": 240, "speed": 135 }
+          },
+          {
+            "id": "l2-spike-a",
+            "type": "spike",
+            "x": 544,
+            "y": 624,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "l2-spike-b",
+            "type": "spike",
+            "x": 1280,
+            "y": 624,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "l2-spike-c",
+            "type": "spike",
+            "x": 2560,
+            "y": 624,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "l2-slime",
+            "type": "slime",
+            "x": 1120,
+            "y": 592,
+            "width": 64,
+            "height": 64,
+            "movement": { "axis": "horizontal", "distance": 224, "speed": 72 }
+          },
+          {
+            "id": "l2-crystal-a",
+            "type": "coin",
+            "x": 400,
+            "y": 480,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "l2-crystal-b",
+            "type": "coin",
+            "x": 752,
+            "y": 456,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "l2-crystal-c",
+            "type": "coin",
+            "x": 1024,
+            "y": 464,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "l2-crystal-d",
+            "type": "coin",
+            "x": 1456,
+            "y": 416,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "l2-crystal-e",
+            "type": "coin",
+            "x": 1984,
+            "y": 400,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "l2-crystal-f",
+            "type": "coin",
+            "x": 2768,
+            "y": 496,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "l2-checkpoint",
+            "type": "checkpoint",
+            "x": 1568,
+            "y": 560,
+            "width": 48,
+            "height": 96
+          },
+          {
+            "id": "l2-goal",
+            "type": "goal",
+            "x": 3104,
+            "y": 560,
+            "width": 64,
+            "height": 96
+          }
+        ]
+      }
+    },
+    {
+      "id": "level-3",
+      "name": "第 3 关 · 火山核心",
+      "abilities": {
+        "moveSpeed": 260,
+        "jumpPower": 650,
+        "doubleJumpEnabled": true,
+        "doubleJumpPower": 600
+      },
+      "document": {
+        "version": 1,
+        "width": 3840,
+        "height": 720,
+        "gridSize": 32,
+        "objects": [
+          {
+            "id": "l3-spawn",
+            "type": "player-spawn",
+            "x": 320,
+            "y": 560,
+            "width": 48,
+            "height": 64
+          },
+          {
+            "id": "l3-ground",
+            "type": "platform",
+            "x": 0,
+            "y": 656,
+            "width": 3840,
+            "height": 64
+          },
+          {
+            "id": "l3-pit-a",
+            "type": "pit",
+            "x": 512,
+            "y": 656,
+            "width": 256,
+            "height": 64
+          },
+          {
+            "id": "l3-pit-b",
+            "type": "pit",
+            "x": 1504,
+            "y": 656,
+            "width": 320,
+            "height": 64
+          },
+          {
+            "id": "l3-pit-c",
+            "type": "pit",
+            "x": 2592,
+            "y": 656,
+            "width": 320,
+            "height": 64
+          },
+          {
+            "id": "l3-platform-a",
+            "type": "platform",
+            "x": 288,
+            "y": 512,
+            "width": 160,
+            "height": 32
+          },
+          {
+            "id": "l3-platform-b",
+            "type": "platform",
+            "x": 832,
+            "y": 496,
+            "width": 224,
+            "height": 32
+          },
+          {
+            "id": "l3-platform-c",
+            "type": "platform",
+            "x": 1216,
+            "y": 432,
+            "width": 192,
+            "height": 32
+          },
+          {
+            "id": "l3-platform-d",
+            "type": "platform",
+            "x": 1888,
+            "y": 464,
+            "width": 224,
+            "height": 32
+          },
+          {
+            "id": "l3-platform-e",
+            "type": "platform",
             "x": 2240,
+            "y": 400,
+            "width": 192,
+            "height": 32
+          },
+          {
+            "id": "l3-platform-f",
+            "type": "platform",
+            "x": 2976,
+            "y": 496,
+            "width": 224,
+            "height": 32
+          },
+          {
+            "id": "l3-platform-g",
+            "type": "platform",
+            "x": 3376,
+            "y": 448,
+            "width": 192,
+            "height": 32
+          },
+          {
+            "id": "l3-moving-a",
+            "type": "moving-platform",
+            "x": 560,
+            "y": 520,
+            "width": 160,
+            "height": 24,
+            "movement": { "axis": "horizontal", "distance": 240, "speed": 135 }
+          },
+          {
+            "id": "l3-moving-b",
+            "type": "moving-platform",
+            "x": 1584,
+            "y": 448,
+            "width": 160,
+            "height": 24,
+            "movement": { "axis": "vertical", "distance": 200, "speed": 115 }
+          },
+          {
+            "id": "l3-moving-c",
+            "type": "moving-platform",
+            "x": 2688,
+            "y": 520,
+            "width": 160,
+            "height": 24,
+            "movement": { "axis": "horizontal", "distance": 260, "speed": 145 }
+          },
+          {
+            "id": "l3-spike-a",
+            "type": "spike",
+            "x": 1088,
+            "y": 624,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "l3-spike-b",
+            "type": "spike",
+            "x": 2304,
+            "y": 624,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "l3-spike-c",
+            "type": "spike",
+            "x": 3264,
+            "y": 624,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "l3-slime-a",
+            "type": "slime",
+            "x": 1120,
+            "y": 592,
+            "width": 64,
+            "height": 64,
+            "movement": { "axis": "horizontal", "distance": 224, "speed": 82 }
+          },
+          {
+            "id": "l3-slime-b",
+            "type": "slime",
+            "x": 3296,
+            "y": 560,
+            "width": 96,
+            "height": 96,
+            "movement": { "axis": "horizontal", "distance": 256, "speed": 70 }
+          },
+          {
+            "id": "l3-pursuer",
+            "type": "slime",
+            "x": 96,
+            "y": 592,
+            "width": 64,
+            "height": 64,
+            "movement": { "axis": "horizontal", "distance": 3744, "speed": 230 }
+          },
+          {
+            "id": "l3-bee",
+            "type": "bee",
+            "x": 896,
+            "y": 384,
+            "width": 64,
+            "height": 48,
+            "movement": { "axis": "horizontal", "distance": 224, "speed": 105 }
+          },
+          {
+            "id": "l3-crystal-a",
+            "type": "coin",
+            "x": 352,
+            "y": 464,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "l3-crystal-b",
+            "type": "coin",
+            "x": 624,
+            "y": 448,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "l3-crystal-c",
+            "type": "coin",
+            "x": 912,
+            "y": 448,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "l3-crystal-d",
+            "type": "coin",
+            "x": 1280,
+            "y": 384,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "l3-crystal-e",
+            "type": "coin",
+            "x": 1664,
+            "y": 384,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "l3-crystal-f",
+            "type": "coin",
+            "x": 2288,
+            "y": 352,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "l3-crystal-g",
+            "type": "coin",
+            "x": 2768,
+            "y": 448,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "l3-crystal-h",
+            "type": "coin",
+            "x": 3440,
+            "y": 400,
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "l3-checkpoint-a",
+            "type": "checkpoint",
+            "x": 1344,
+            "y": 560,
+            "width": 48,
+            "height": 96
+          },
+          {
+            "id": "l3-checkpoint-b",
+            "type": "checkpoint",
+            "x": 2432,
+            "y": 560,
+            "width": 48,
+            "height": 96
+          },
+          {
+            "id": "l3-goal",
+            "type": "goal",
+            "x": 3680,
             "y": 560,
             "width": 64,
             "height": 96

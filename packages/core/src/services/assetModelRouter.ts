@@ -66,12 +66,12 @@ export class ModelRouter {
   private audioRenderService: AudioRenderService;
 
   /** Resolved configuration that produced this router. Useful for logging. */
-  readonly imageConfig: ResolvedProviderConfig;
+  readonly imageConfig: ResolvedProviderConfig | undefined;
   readonly videoConfig: ResolvedProviderConfig | undefined;
   readonly audioConfig: ResolvedProviderConfig | undefined;
 
   constructor(options: {
-    imageConfig: ResolvedProviderConfig;
+    imageConfig?: ResolvedProviderConfig;
     videoConfig?: ResolvedProviderConfig;
     audioConfig?: ResolvedProviderConfig;
   }) {
@@ -79,16 +79,20 @@ export class ModelRouter {
     this.videoConfig = options.videoConfig;
     this.audioConfig = options.audioConfig;
 
-    const imageModelConfig: ImageModelConfig = {
-      apiKey: this.imageConfig.apiKey,
-      baseUrl: this.imageConfig.baseUrl,
-      modelType: this.imageConfig.provider,
-      modelNameGeneration: this.imageConfig.model,
-      modelNameEditing:
-        IMAGE_EDIT_DEFAULTS[this.imageConfig.provider] ??
-        this.imageConfig.model,
-    };
-    this.imageService = createImageService(imageModelConfig);
+    if (this.imageConfig) {
+      const imageModelConfig: ImageModelConfig = {
+        apiKey: this.imageConfig.apiKey,
+        baseUrl: this.imageConfig.baseUrl,
+        modelType: this.imageConfig.provider,
+        modelNameGeneration: this.imageConfig.model,
+        modelNameEditing:
+          IMAGE_EDIT_DEFAULTS[this.imageConfig.provider] ??
+          this.imageConfig.model,
+      };
+      this.imageService = createImageService(imageModelConfig);
+    } else {
+      this.imageService = createDisabledImageService();
+    }
 
     if (this.videoConfig) {
       const videoModelConfig: VideoModelConfig = {
@@ -128,7 +132,7 @@ export class ModelRouter {
     size: string = '1024*1024',
   ): Promise<string> {
     console.log(
-      `[ModelRouter] Routing image generation to ${this.imageConfig.provider}`,
+      `[ModelRouter] Routing image generation to ${this.imageConfig?.provider ?? 'disabled'}`,
     );
     return this.imageService.generateImage(prompt, size);
   }
@@ -139,7 +143,7 @@ export class ModelRouter {
     previousFrameUrl?: string | null,
   ): Promise<string> {
     console.log(
-      `[ModelRouter] Routing image editing to ${this.imageConfig.provider}`,
+      `[ModelRouter] Routing image editing to ${this.imageConfig?.provider ?? 'disabled'}`,
     );
     return this.imageService.editImage(
       referenceImageUrl,
@@ -230,7 +234,7 @@ export class ModelRouter {
    * routing image calls to.
    */
   getModelType(): string {
-    return this.imageConfig.provider;
+    return this.imageConfig?.provider ?? 'disabled';
   }
 
   getImageService(): IImageService {
@@ -248,11 +252,26 @@ export class ModelRouter {
 
 // ============== Disabled-modality stubs ==============
 //
-// When the user hasn't configured a video/audio provider we still hand
+// When a construction mode does not configure a particular provider, we hand
 // the asset tool a router so its other code paths keep working. These
 // stubs throw the same MissingProviderConfigError-style message the
 // resolver would have raised, but only when the disabled modality is
 // actually used.
+
+function createDisabledImageService(): IImageService {
+  const fail = (): never => {
+    throw new Error(
+      'OpenGame image generation is not configured. Set OPENGAME_IMAGE_PROVIDER, ' +
+        'OPENGAME_IMAGE_API_KEY (and OPENGAME_IMAGE_MODEL for openai-compat), or add ' +
+        '"openGame.providers.image" to your settings.json. ' +
+        'See docs/users/configuration/api-keys.md.',
+    );
+  };
+  return {
+    generateImage: () => fail(),
+    editImage: () => fail(),
+  };
+}
 
 function createDisabledVideoService(): IVideoService {
   const fail = (): never => {
@@ -285,34 +304,47 @@ function createDisabledAudioService(): IAudioService {
 // ============== Factory Function ==============
 
 /**
- * Build a ModelRouter from environment + (optional) settings.json. The
- * IMAGE modality is mandatory because every asset request (background,
- * sprite, animation base frame, tileset) starts with an image call. The
- * VIDEO and AUDIO modalities are optional — if unconfigured, the
- * corresponding code paths throw an actionable error only when actually
- * invoked, so users without a video key can still generate static
- * sprites and backgrounds.
+ * Build a ModelRouter from environment + (optional) settings.json. Visual
+ * mode is the backwards-compatible default: IMAGE is mandatory while VIDEO
+ * and AUDIO are optional. Audio mode resolves AUDIO as its only required
+ * provider and installs disabled image/video services, so a pure audio request
+ * never depends on visual credentials.
  *
- * The legacy `modelType` option is honored as a hint only when the user
- * hasn't already set `OPENGAME_IMAGE_PROVIDER`, for backward compat with
- * the original `model_type` parameter on the GenerateAssetsTool.
+ * The legacy `modelType` option remains a provider hint for backward
+ * compatibility with the original `model_type` parameter. In audio mode the
+ * hint is deliberately restricted to audio so it cannot create unrelated
+ * image/video requirements.
  */
+export type ModelRouterRequiredModality = 'visual' | 'audio';
+
 export function createModelRouter(
   options: {
     modelType?: 'tongyi' | 'doubao' | 'openai-compat';
     providers?: OpenGameProvidersSettings;
+    requiredModality?: ModelRouterRequiredModality;
   } = {},
 ): ModelRouter {
-  const { providers, modelType } = options;
+  const { providers, modelType, requiredModality = 'visual' } = options;
 
   // If the caller passed a legacy `modelType`, fold it into the providers
-  // hint for any modality that doesn't already have an explicit provider.
+  // hint for any required modality that doesn't already have an explicit
+  // provider. Audio mode intentionally avoids injecting an unrelated image
+  // or video provider from this legacy option.
   const merged: OpenGameProvidersSettings = providers ? { ...providers } : {};
   if (modelType) {
-    for (const m of ['image', 'video', 'audio'] as const) {
+    const hintedModalities =
+      requiredModality === 'audio'
+        ? (['audio'] as const)
+        : (['image', 'video', 'audio'] as const);
+    for (const m of hintedModalities) {
       const existing = merged[m] ?? {};
       merged[m] = { ...existing, provider: existing.provider ?? modelType };
     }
+  }
+
+  if (requiredModality === 'audio') {
+    const audioConfig = resolveProviderConfig('audio', merged);
+    return new ModelRouter({ audioConfig });
   }
 
   const imageConfig = resolveProviderConfig('image', merged);

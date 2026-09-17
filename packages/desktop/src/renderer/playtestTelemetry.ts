@@ -39,6 +39,10 @@ export type PlaytestEvent =
   | ({ type: 'position' } & PlaytestPosition)
   | ({ type: 'jumped' } & PlaytestPosition)
   | ({ type: 'coin-collected'; objectId: string } & PlaytestPosition)
+  | ({ type: 'keycard-collected'; objectId: string } & PlaytestPosition)
+  | ({ type: 'security-door-unlocked'; objectId: string } & PlaytestPosition)
+  | ({ type: 'floor-switch-activated'; objectId: string } & PlaytestPosition)
+  | ({ type: 'laser-gate-disabled'; objectId: string } & PlaytestPosition)
   | ({ type: 'died'; objectId: string } & PlaytestPosition)
   | ({ type: 'completed' } & PlaytestPosition)
   | ({
@@ -61,6 +65,10 @@ export interface PlaytestReport {
   farthestX: number;
   jumps: number;
   collectedCoinIds: string[];
+  collectedKeycardIds: string[];
+  unlockedSecurityDoorIds: string[];
+  activatedFloorSwitchIds: string[];
+  disabledLaserGateIds: string[];
   totalCoins: number;
   deaths: number;
   lastHazardId?: string;
@@ -90,6 +98,10 @@ const EVENT_KEYS: Record<PlaytestEvent['type'], readonly string[]> = {
   position: ['type', 'x', 'y'],
   jumped: ['type', 'x', 'y'],
   'coin-collected': ['type', 'objectId', 'x', 'y'],
+  'keycard-collected': ['type', 'objectId', 'x', 'y'],
+  'security-door-unlocked': ['type', 'objectId', 'x', 'y'],
+  'floor-switch-activated': ['type', 'objectId', 'x', 'y'],
+  'laser-gate-disabled': ['type', 'objectId', 'x', 'y'],
   died: ['type', 'objectId', 'x', 'y'],
   completed: ['type', 'x', 'y'],
   'automation-state': ['type', 'active', 'action', 'x', 'y'],
@@ -113,6 +125,10 @@ export function createEmptyPlaytestReport(): PlaytestReport {
     farthestX: 0,
     jumps: 0,
     collectedCoinIds: [],
+    collectedKeycardIds: [],
+    unlockedSecurityDoorIds: [],
+    activatedFloorSwitchIds: [],
+    disabledLaserGateIds: [],
     totalCoins: 0,
     deaths: 0,
     automationActive: false,
@@ -172,7 +188,12 @@ export function parsePlaytestMessage(
     return undefined;
   }
   if (
-    (type === 'coin-collected' || type === 'died') &&
+    (type === 'coin-collected' ||
+      type === 'keycard-collected' ||
+      type === 'security-door-unlocked' ||
+      type === 'floor-switch-activated' ||
+      type === 'laser-gate-disabled' ||
+      type === 'died') &&
     (typeof value.event.objectId !== 'string' ||
       !OBJECT_ID_PATTERN.test(value.event.objectId))
   ) {
@@ -247,6 +268,10 @@ export function reducePlaytestReport(
         status: 'running',
         attempts: previous.attempts + 1,
         collectedCoinIds: [],
+        collectedKeycardIds: [],
+        unlockedSecurityDoorIds: [],
+        activatedFloorSwitchIds: [],
+        disabledLaserGateIds: [],
         totalCoins: event.totalCoins,
       };
     case 'position':
@@ -259,6 +284,42 @@ export function reducePlaytestReport(
         collectedCoinIds: previous.collectedCoinIds.includes(event.objectId)
           ? previous.collectedCoinIds
           : [...previous.collectedCoinIds, event.objectId],
+      };
+    case 'keycard-collected':
+      return {
+        ...common,
+        collectedKeycardIds: previous.collectedKeycardIds.includes(
+          event.objectId,
+        )
+          ? previous.collectedKeycardIds
+          : [...previous.collectedKeycardIds, event.objectId],
+      };
+    case 'security-door-unlocked':
+      return {
+        ...common,
+        unlockedSecurityDoorIds: previous.unlockedSecurityDoorIds.includes(
+          event.objectId,
+        )
+          ? previous.unlockedSecurityDoorIds
+          : [...previous.unlockedSecurityDoorIds, event.objectId],
+      };
+    case 'floor-switch-activated':
+      return {
+        ...common,
+        activatedFloorSwitchIds: previous.activatedFloorSwitchIds.includes(
+          event.objectId,
+        )
+          ? previous.activatedFloorSwitchIds
+          : [...previous.activatedFloorSwitchIds, event.objectId],
+      };
+    case 'laser-gate-disabled':
+      return {
+        ...common,
+        disabledLaserGateIds: previous.disabledLaserGateIds.includes(
+          event.objectId,
+        )
+          ? previous.disabledLaserGateIds
+          : [...previous.disabledLaserGateIds, event.objectId],
       };
     case 'died':
       return evaluatePlaytestResult(

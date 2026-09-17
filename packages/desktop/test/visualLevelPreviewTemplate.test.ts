@@ -2,7 +2,6 @@ import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import {
   LEVEL_OBJECT_TYPES,
-  createDefaultLevelDocument,
   parseLevelDocument,
 } from '../src/shared/levelDocument.js';
 import { parseLevelCampaign } from '../src/shared/levelCampaign.js';
@@ -17,18 +16,16 @@ const coreTemplate = new URL(
 );
 
 describe('fixed visual level preview template', () => {
-  it('ships the same valid default level as the editor', async () => {
+  it('ships the same valid first level in the fallback and campaign files', async () => {
     const [source, campaignSource] = await Promise.all([
       readFile(new URL('level.json', platformerTemplate), 'utf8'),
       readFile(new URL('levels.json', platformerTemplate), 'utf8'),
     ]);
 
-    expect(parseLevelDocument(JSON.parse(source))).toEqual(
-      createDefaultLevelDocument(),
-    );
-    expect(
-      parseLevelCampaign(JSON.parse(campaignSource)).levels[0]?.document,
-    ).toEqual(createDefaultLevelDocument());
+    const fallback = parseLevelDocument(JSON.parse(source));
+    const campaign = parseLevelCampaign(JSON.parse(campaignSource));
+    expect(fallback).toEqual(campaign.levels[0]?.document);
+    expect(campaign.levels).toHaveLength(3);
   });
 
   it('starts the fixed playable scene from the Phaser entry', async () => {
@@ -204,8 +201,8 @@ describe('fixed visual level preview template', () => {
 
     expect(gameInfo).toMatchObject({
       version: 1,
-      title: '我的横版冒险',
-      subtitle: '收集金币，躲避危险，抵达每一关的终点。',
+      title: '火山逃生',
+      subtitle: '帮助北极熊穿过移动熔炉桥，躲开岩浆巨兽的追赶并逃离火山。',
     });
   });
 

@@ -89,6 +89,7 @@ class GameTypeClassifierInvocation extends BaseToolInvocation<
           process.env.GAME_TEMPLATES_DIR || path.resolve('../../templates'),
         docsDir: process.env.GAME_DOCS_DIR || path.resolve('../../docs'),
         archetype: classification.archetype,
+        starterTemplateId: process.env.GAME_STARTER_TEMPLATE_ID,
       });
 
       const llmContent = this.formatLLMContent(classification, scaffold);
@@ -117,6 +118,9 @@ class GameTypeClassifierInvocation extends BaseToolInvocation<
     result: ClassificationResult,
     scaffold: GameScaffoldResult,
   ): string {
+    if (process.env.GAME_STARTER_TEMPLATE_ID === 'ai-foundation') {
+      return '当前是 AI 自主创建项目。基础引擎已由桌面端准备，本次未复制任何示例。请读取 src/AI_CREATION.md，直接按用户要求生成关卡、规则和画面；不要重新套用示例或调用 generate_gdd 绕行。';
+    }
     return `<classification>
 游戏类型：${result.archetype}
 判断理由：${result.reasoning}
@@ -265,11 +269,34 @@ export async function scaffoldGameProject(input: {
   templatesDir: string;
   docsDir: string;
   archetype: GameArchetype;
+  starterTemplateId?: string;
 }): Promise<GameScaffoldResult> {
   if ((input as { archetype: unknown }).archetype !== 'platformer') {
     throw new Error('游戏脚手架只支持 platformer archetype');
   }
   const projectRoot = path.resolve(input.projectRoot);
+  if (input.starterTemplateId === 'ai-foundation') {
+    await assertDirectory(projectRoot, '项目目录不存在或类型不安全');
+    await assertDirectory(
+      path.join(projectRoot, 'src'),
+      '基础工作区尚未准备，请在桌面端重新准备',
+    );
+    for (const file of [
+      'levels.json',
+      'gameInfo.json',
+      'visualStyle.json',
+      'main.ts',
+    ]) {
+      const stat = await fs
+        .lstat(path.join(projectRoot, 'src', file))
+        .catch(() => undefined);
+      if (!stat?.isFile() || stat.isSymbolicLink())
+        throw new Error(
+          '基础工作区缺少安全文件，请在桌面端重新准备；不得复制示例替代。',
+        );
+    }
+    return { copiedFiles: 0, preservedFiles: 4 };
+  }
   const templatesDir = path.resolve(input.templatesDir);
   const docsDir = path.resolve(input.docsDir);
   await validateTemplateDependencyContract(path.join(templatesDir, 'core'));

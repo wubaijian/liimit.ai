@@ -78,6 +78,10 @@ const OBJECT_LABELS: Record<LevelObjectType, string> = {
   slime: '史莱姆',
   bee: '蜜蜂',
   coin: '金币',
+  keycard: '门卡',
+  'security-door': '安全门',
+  'floor-switch': '地面开关',
+  'laser-gate': '激光门',
   checkpoint: '检查点',
   goal: '终点',
   pit: '坑洞',
@@ -1520,6 +1524,37 @@ function LevelObjectShape({
     case 'moving-platform':
       return (
         <g {...common}>
+          <line
+            className="level-moving-track"
+            x1={
+              object.movement?.axis === 'vertical'
+                ? object.x + object.width / 2
+                : object.x +
+                  object.width / 2 -
+                  (object.movement?.distance ?? 128)
+            }
+            y1={
+              object.movement?.axis === 'vertical'
+                ? object.y +
+                  object.height / 2 -
+                  (object.movement?.distance ?? 128)
+                : object.y + object.height / 2
+            }
+            x2={
+              object.movement?.axis === 'vertical'
+                ? object.x + object.width / 2
+                : object.x +
+                  object.width / 2 +
+                  (object.movement?.distance ?? 128)
+            }
+            y2={
+              object.movement?.axis === 'vertical'
+                ? object.y +
+                  object.height / 2 +
+                  (object.movement?.distance ?? 128)
+                : object.y + object.height / 2
+            }
+          />
           <rect
             x={object.x}
             y={object.y}
@@ -1539,6 +1574,14 @@ function LevelObjectShape({
             textAnchor="middle"
           >
             {object.movement?.axis === 'vertical' ? '↕' : '↔'}
+          </text>
+          <text
+            className="level-moving-label"
+            x={object.x + object.width / 2}
+            y={object.y - 12}
+            textAnchor="middle"
+          >
+            移动平台
           </text>
         </g>
       );
@@ -1622,6 +1665,106 @@ function LevelObjectShape({
             textAnchor="middle"
           >
             ·
+          </text>
+        </g>
+      );
+    case 'keycard':
+      return (
+        <g {...common}>
+          <rect
+            x={object.x}
+            y={object.y}
+            width={object.width}
+            height={object.height}
+            rx={Math.min(8, object.height / 4)}
+          />
+          <circle
+            cx={object.x + object.width * 0.78}
+            cy={object.y + object.height / 2}
+            r={Math.max(2, object.height * 0.14)}
+          />
+          <text
+            x={object.x + object.width / 2}
+            y={object.y - 10}
+            textAnchor="middle"
+          >
+            蓝色门卡
+          </text>
+        </g>
+      );
+    case 'security-door':
+      return (
+        <g {...common}>
+          <rect
+            x={object.x}
+            y={object.y}
+            width={object.width}
+            height={object.height}
+            rx={Math.min(10, object.width / 5)}
+          />
+          <line
+            x1={object.x + object.width / 2}
+            y1={object.y + 8}
+            x2={object.x + object.width / 2}
+            y2={object.y + object.height - 8}
+          />
+          <text
+            x={object.x + object.width / 2}
+            y={object.y - 10}
+            textAnchor="middle"
+          >
+            安全门
+          </text>
+        </g>
+      );
+    case 'floor-switch':
+      return (
+        <g {...common}>
+          <rect
+            x={object.x}
+            y={object.y}
+            width={object.width}
+            height={object.height}
+            rx={Math.min(8, object.height / 3)}
+          />
+          <circle
+            cx={object.x + object.width / 2}
+            cy={object.y + object.height / 2}
+            r={Math.max(3, Math.min(object.height, object.width) * 0.18)}
+          />
+          <text
+            x={object.x + object.width / 2}
+            y={object.y - 10}
+            textAnchor="middle"
+          >
+            控制开关
+          </text>
+        </g>
+      );
+    case 'laser-gate':
+      return (
+        <g {...common}>
+          <rect
+            x={object.x}
+            y={object.y}
+            width={object.width}
+            height={object.height}
+          />
+          {[0.25, 0.5, 0.75].map((ratio) => (
+            <line
+              key={ratio}
+              x1={object.x + object.width * ratio}
+              y1={object.y + 8}
+              x2={object.x + object.width * ratio}
+              y2={object.y + object.height - 8}
+            />
+          ))}
+          <text
+            x={object.x + object.width / 2}
+            y={object.y - 10}
+            textAnchor="middle"
+          >
+            激光门
           </text>
         </g>
       );

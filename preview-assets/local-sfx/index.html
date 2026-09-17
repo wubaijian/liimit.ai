@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>liimit.ai 本地音效试听</title>
+    <style>
+      :root { color: #1d2735; background: #f6f7f9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      body { margin: 0; padding: 48px 24px; }
+      main { max-width: 880px; margin: 0 auto; }
+      h1 { margin: 0 0 8px; font-size: 34px; }
+      .intro { margin: 0 0 28px; color: #667085; line-height: 1.7; }
+      .notice { padding: 14px 16px; margin-bottom: 24px; border: 1px solid #f1c75b; border-radius: 12px; background: #fff9e8; color: #74520b; }
+      .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+      article { padding: 20px; border: 1px solid #dde2ea; border-radius: 14px; background: white; box-shadow: 0 8px 24px rgb(31 41 55 / 6%); }
+      h2 { margin: 0 0 6px; font-size: 19px; }
+      p { margin: 0 0 16px; color: #667085; }
+      audio { width: 100%; height: 42px; }
+      @media (max-width: 680px) { .grid { grid-template-columns: 1fr; } body { padding: 28px 16px; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>第一套本地游戏音效</h1>
+      <p class="intro">卡通街机风格 · 完全离线合成 · 只用于试听选择</p>
+      <div class="notice">本页没有调用 ElevenLabs 或其他音频 API，也没有把声音接入任何游戏。</div>
+      <section class="grid">
+        <article><h2>1. 跳跃</h2><p>轻快向上的卡通弹跳声</p><audio controls src="jump.wav"></audio></article>
+        <article><h2>2. 金币</h2><p>两段式清脆拾取提示声</p><audio controls src="coin.wav"></audio></article>
+        <article><h2>3. 死亡</h2><p>短促下坠、明确但不过分刺耳</p><audio controls src="death.wav"></audio></article>
+        <article><h2>4. 通关</h2><p>四级上行的胜利小旋律</p><audio controls src="level-clear.wav"></audio></article>
+        <article><h2>5. 击中敌人</h2><p>有力度的碰撞与短促回弹</p><audio controls src="enemy-hit.wav"></audio></article>
+        <article><h2>6. 检查点</h2><p>明亮安心的三段激活提示声</p><audio controls src="checkpoint.wav"></audio></article>
+      </section>
+    </main>
+  </body>
+</html>

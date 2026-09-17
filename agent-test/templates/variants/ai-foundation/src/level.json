@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "width": 1280,
+  "height": 720,
+  "gridSize": 32,
+  "objects": [
+    {
+      "id": "workspace-spawn",
+      "type": "player-spawn",
+      "x": 64,
+      "y": 576,
+      "width": 32,
+      "height": 64
+    },
+    {
+      "id": "workspace-floor",
+      "type": "platform",
+      "x": 0,
+      "y": 656,
+      "width": 1280,
+      "height": 64
+    },
+    {
+      "id": "workspace-goal",
+      "type": "goal",
+      "x": 1184,
+      "y": 592,
+      "width": 48,
+      "height": 64
+    }
+  ]
+}

@@ -4,6 +4,11 @@ import type {
 } from '../shared/types.js';
 
 const AUTH_ERROR_CODES = new Set([401, 403, 1004, 2049]);
+const ELEVENLABS_ORIGIN = 'https://api.elevenlabs.io';
+const ELEVENLABS_VALIDATION_CODES = new Set([
+  'empty_text',
+  'missing_required_field',
+]);
 
 export async function testProviderConnection(
   endpoint: ProviderEndpoint,
@@ -23,10 +28,14 @@ export async function testProviderConnection(
       Date.now() - startedAt,
     );
   } catch (error) {
+    const safeError = redactSecret(
+      error instanceof Error ? error.message : String(error),
+      endpoint.apiKey,
+    );
     const message =
       error instanceof Error && error.name === 'AbortError'
         ? '连接超时（15 秒），请检查 Base URL、网络或代理设置。'
-        : `无法连接服务：${error instanceof Error ? error.message : String(error)}`;
+        : `无法连接服务：${safeError}`;
     return { status: 'error', message, latencyMs: Date.now() - startedAt };
   } finally {
     clearTimeout(timeout);
@@ -44,9 +53,14 @@ async function sendProbe(
 
   switch (endpoint.provider) {
     case 'elevenlabs':
-      return fetchImpl(joinApiUrl(endpoint.baseUrl, '/v1/user'), {
-        method: 'GET',
-        headers: { 'xi-api-key': endpoint.apiKey },
+      return fetchImpl(elevenLabsProbeUrl(endpoint.baseUrl), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'xi-api-key': endpoint.apiKey,
+        },
+        body: JSON.stringify({}),
+        redirect: 'error',
         signal,
       });
     case 'stability':
@@ -134,7 +148,11 @@ function classifyResponse(
   latencyMs: number,
 ): ProviderConnectionResult {
   const embeddedCode = findNumericCode(payload);
-  const detail = findMessage(payload);
+  const detail = redactSecret(findMessage(payload), endpoint.apiKey);
+
+  if (endpoint.provider === 'elevenlabs') {
+    return classifyElevenLabsResponse(response, payload, latencyMs);
+  }
 
   if (
     response.status === 401 ||
@@ -216,6 +234,97 @@ function classifyResponse(
   };
 }
 
+function classifyElevenLabsResponse(
+  response: Response,
+  payload: unknown,
+  latencyMs: number,
+): ProviderConnectionResult {
+  const error = findNestedError(payload);
+
+  if (response.status === 401) {
+    if (
+      error.code === 'missing_permissions' ||
+      error.code === 'insufficient_permissions' ||
+      error.code === 'needs_authorization'
+    ) {
+      return {
+        status: 'error',
+        message:
+          'ElevenLabs 密钥已被识别，但缺少 Sound Effects 权限。请在 ElevenLabs 密钥设置中开启 Sound Effects 后再试。',
+        latencyMs,
+      };
+    }
+    if (
+      error.code === 'invalid_api_key' ||
+      error.code === 'unauthorized' ||
+      error.type === 'authentication_error'
+    ) {
+      return {
+        status: 'error',
+        message:
+          'ElevenLabs API Key 无效或已过期，请重新复制完整密钥，或在官网新建密钥后再试。',
+        latencyMs,
+      };
+    }
+    return {
+      status: 'error',
+      message:
+        'ElevenLabs 拒绝了鉴权（HTTP 401）。请确认完整密钥、密钥状态和 Sound Effects 权限后再试。',
+      latencyMs,
+    };
+  }
+
+  if (response.status === 403) {
+    return {
+      status: 'error',
+      message:
+        'ElevenLabs 密钥已被识别，但可能缺少 Sound Effects 权限、当前 IP 不在白名单中，或套餐暂不支持该能力。',
+      latencyMs,
+    };
+  }
+
+  if (response.status === 402) {
+    return {
+      status: 'warning',
+      message: 'ElevenLabs 密钥已被识别，但账户余额或套餐不可用。',
+      latencyMs,
+    };
+  }
+
+  if (response.status === 429) {
+    return {
+      status: 'warning',
+      message: 'ElevenLabs 服务已连接，但当前触发了请求频率限制，请稍后再试。',
+      latencyMs,
+    };
+  }
+
+  const validationResponse =
+    (response.status === 400 || response.status === 422) &&
+    (ELEVENLABS_VALIDATION_CODES.has(error.code) ||
+      hasElevenLabsMissingTextValidation(payload));
+  if (validationResponse) {
+    return success(
+      'ElevenLabs Sound Effects 音效能力可用；本次只检查密钥与权限，未生成音频，也未消耗生成额度。',
+      latencyMs,
+    );
+  }
+
+  if (response.status >= 500) {
+    return {
+      status: 'error',
+      message: `ElevenLabs 服务暂时不可用（HTTP ${response.status}），请稍后再试。`,
+      latencyMs,
+    };
+  }
+
+  return {
+    status: 'error',
+    message: `ElevenLabs 基础检查返回了未预期结果（HTTP ${response.status}），未能确认 Sound Effects 权限。`,
+    latencyMs,
+  };
+}
+
 function success(message: string, latencyMs: number): ProviderConnectionResult {
   return { status: 'success', message, latencyMs };
 }
@@ -267,6 +376,86 @@ function findMessage(payload: unknown): string {
     record.detail ??
     '';
   return typeof value === 'string' ? value.slice(0, 500) : '';
+}
+
+function findNestedError(payload: unknown): { type: string; code: string } {
+  if (!payload || typeof payload !== 'object') return { type: '', code: '' };
+  const record = payload as Record<string, unknown>;
+  const detail =
+    record.detail && typeof record.detail === 'object'
+      ? (record.detail as Record<string, unknown>)
+      : undefined;
+  const error =
+    record.error && typeof record.error === 'object'
+      ? (record.error as Record<string, unknown>)
+      : undefined;
+  return {
+    type: firstString(detail?.type, error?.type, record.type).toLowerCase(),
+    code: firstString(
+      detail?.code,
+      detail?.status,
+      error?.code,
+      error?.status,
+      record.code,
+      record.status,
+    ).toLowerCase(),
+  };
+}
+
+function hasElevenLabsMissingTextValidation(payload: unknown): boolean {
+  if (!payload || typeof payload !== 'object') return false;
+  const detail = (payload as Record<string, unknown>).detail;
+  if (!Array.isArray(detail)) return false;
+
+  return detail.some((candidate) => {
+    if (!candidate || typeof candidate !== 'object') return false;
+    const record = candidate as Record<string, unknown>;
+    const type = firstString(record.type, record.code).toLowerCase();
+    const location = Array.isArray(record.loc)
+      ? record.loc.map((part) => String(part).toLowerCase())
+      : [];
+    return (
+      (type === 'missing' ||
+        type === 'missing_required_field' ||
+        type === 'value_error.missing') &&
+      location.includes('body') &&
+      location.includes('text')
+    );
+  });
+}
+
+function firstString(...values: unknown[]): string {
+  const value = values.find(
+    (candidate): candidate is string => typeof candidate === 'string',
+  );
+  return value?.trim() ?? '';
+}
+
+function redactSecret(value: string, secret: string): string {
+  const normalizedSecret = secret.trim();
+  if (!normalizedSecret) return value;
+  return value.split(normalizedSecret).join('[已隐藏]');
+}
+
+function elevenLabsProbeUrl(baseUrl: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    throw new Error(
+      `ElevenLabs 基础检查只允许官方服务地址 ${ELEVENLABS_ORIGIN}。`,
+    );
+  }
+  if (
+    parsed.origin !== ELEVENLABS_ORIGIN ||
+    Boolean(parsed.username) ||
+    Boolean(parsed.password)
+  ) {
+    throw new Error(
+      `ElevenLabs 基础检查只允许官方服务地址 ${ELEVENLABS_ORIGIN}。`,
+    );
+  }
+  return `${ELEVENLABS_ORIGIN}/v1/sound-generation`;
 }
 
 function joinApiUrl(baseUrl: string, pathName: string): string {

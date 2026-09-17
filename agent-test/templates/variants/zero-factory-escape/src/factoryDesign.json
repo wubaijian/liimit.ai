@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "id": "zero-factory-escape",
+  "engine": "Phaser 3",
+  "gameType": "2D 横版平台跳跃",
+  "artDirection": "原创卡通机械工厂，深蓝钢铁、警示黄和能量青为主色",
+  "assets": {
+    "background": "/assets/factory/zero-factory-background.png",
+    "player": "/assets/factory/maintenance-robot-hero.png",
+    "enemy": "/assets/factory/security-robot-enemy.png"
+  },
+  "animations": {
+    "player": {
+      "idle": {
+        "path": "/assets/factory/hero-idle-3f.png",
+        "frames": 3,
+        "frameWidth": 591,
+        "frameHeight": 887
+      },
+      "run": {
+        "path": "/assets/factory/hero-run-3f.png",
+        "frames": 3,
+        "frameWidth": 512,
+        "frameHeight": 1024
+      },
+      "jump": {
+        "path": "/assets/factory/hero-jump-3f.png",
+        "frames": 3,
+        "frameWidth": 572,
+        "frameHeight": 916
+      }
+    },
+    "enemy": {
+      "patrol": {
+        "path": "/assets/factory/enemy-patrol-3f.png",
+        "frames": 3,
+        "frameWidth": 591,
+        "frameHeight": 887
+      },
+      "alert": {
+        "path": "/assets/factory/enemy-alert-3f.png",
+        "frames": 3,
+        "frameWidth": 591,
+        "frameHeight": 887
+      }
+    }
+  },
+  "mechanismArt": "门卡、安全门、地面开关和激光门使用程序绘制，保证缩放清晰并可随机关状态变色",
+  "coreRules": [
+    "使用键盘移动、跳跃和二连跳",
+    "拿到门卡后才能通过对应的安全门",
+    "踩下全部指定开关后关闭激光门",
+    "碰到激光或巡逻机器人会死亡并按关卡规则复活",
+    "普通平台和机械移动平台都可以在编辑器中调整"
+  ],
+  "levels": [
+    {
+      "id": "level-1",
+      "name": "流水线车间",
+      "focus": "认识机械移动平台、齿轮障碍和基础机器人"
+    },
+    {
+      "id": "level-2",
+      "name": "门禁区域",
+      "focus": "先取得蓝色门卡，再打开对应的安全门"
+    },
+    {
+      "id": "level-3",
+      "name": "中央控制室",
+      "focus": "依次启动两个开关，关闭激光门并到达出口"
+    }
+  ],
+  "plannedObjects": [
+    "keycard",
+    "security-door",
+    "floor-switch",
+    "laser-gate",
+    "factory-robot"
+  ]
+}

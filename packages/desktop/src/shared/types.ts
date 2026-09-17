@@ -23,6 +23,24 @@ export const FIXED_PRODUCT_MODE = {
 
 export type ProductModeId = typeof FIXED_PRODUCT_MODE.id;
 
+export const STARTER_TEMPLATE_IDS = [
+  'ai-foundation',
+  'platformer-base',
+  'fire-mountain-escape',
+  'zero-factory-escape',
+] as const;
+
+export type StarterTemplateId = (typeof STARTER_TEMPLATE_IDS)[number];
+
+export function isStarterTemplateId(
+  value: unknown,
+): value is StarterTemplateId {
+  return (
+    typeof value === 'string' &&
+    (STARTER_TEMPLATE_IDS as readonly string[]).includes(value)
+  );
+}
+
 export function isFixedProductMode(project: {
   productMode?: unknown;
 }): project is { productMode: ProductModeId } {
@@ -112,6 +130,8 @@ export interface AgentHistoryResult {
 }
 
 export interface ProjectRecord {
+  creationMode?: 'template' | 'ai';
+  initialGeneration?: 'pending' | 'active' | 'incomplete' | 'completed';
   id: string;
   name: string;
   path: string;
@@ -122,6 +142,7 @@ export interface ProjectRecord {
   createdAt: string;
   updatedAt: string;
   productMode: ProductModeId;
+  starterTemplateId?: StarterTemplateId;
   starterPreparation?: StarterPreparation;
 }
 
@@ -160,6 +181,113 @@ export interface ProviderConnectionResult {
   status: 'success' | 'warning' | 'error';
   message: string;
   latencyMs: number;
+}
+
+export const GAME_SOUND_SLOTS = [
+  'jump',
+  'coin',
+  'death',
+  'levelClear',
+  'enemyHit',
+  'checkpoint',
+] as const;
+
+export type GameSoundSlot = (typeof GAME_SOUND_SLOTS)[number];
+
+export const AUDIO_DESCRIPTION_MAX_LENGTH = 300;
+
+export const AUDIO_DURATION_OPTIONS = [
+  0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8,
+] as const;
+
+export type AudioDurationSeconds = (typeof AUDIO_DURATION_OPTIONS)[number];
+
+export const AUDIO_RECOMMENDED_DURATION_BY_SOUND: Record<
+  GameSoundSlot,
+  AudioDurationSeconds
+> = {
+  jump: 0.5,
+  coin: 0.5,
+  death: 1,
+  levelClear: 2,
+  enemyHit: 0.5,
+  checkpoint: 1,
+};
+
+export interface GenerateAudioPreviewInput {
+  sound: GameSoundSlot;
+  description: string;
+  durationSeconds: AudioDurationSeconds;
+}
+
+export type AudioPreviewMimeType = 'audio/mpeg' | 'audio/wav';
+
+export interface AudioPreviewResult {
+  provider: 'elevenlabs' | 'liimit-local';
+  model: 'eleven_text_to_sound_v2' | 'local-sfx-v1';
+  sound: GameSoundSlot;
+  durationSeconds: AudioDurationSeconds;
+  mimeType: 'audio/mpeg' | 'audio/wav';
+  bytes: Uint8Array;
+  latencyMs: number;
+}
+
+export const AUDIO_PREVIEW_CANDIDATE_NUMBERS = [1, 2, 3] as const;
+export const AUDIO_PREVIEW_CANDIDATE_COUNT = 3 as const;
+
+export type AudioPreviewCandidateNumber =
+  (typeof AUDIO_PREVIEW_CANDIDATE_NUMBERS)[number];
+
+export interface AudioPreviewCandidate extends AudioPreviewResult {
+  candidateNumber: AudioPreviewCandidateNumber;
+}
+
+export interface AudioPreviewBatchResult {
+  candidates: AudioPreviewCandidate[];
+  failedCount: number;
+  attemptedCount: typeof AUDIO_PREVIEW_CANDIDATE_COUNT;
+  latencyMs: number;
+}
+
+export interface AudioPreviewProgress {
+  generationId: string;
+  status: 'running' | 'complete' | 'cancelled';
+  totalCount: typeof AUDIO_PREVIEW_CANDIDATE_COUNT;
+  completedCount: number;
+  successCount: number;
+  failedCount: number;
+}
+
+export interface CancelAudioPreviewResult {
+  status: 'cancelling' | 'idle';
+}
+
+export interface ApplyAudioPreviewInput {
+  projectId: string;
+  sound: GameSoundSlot;
+  mimeType: AudioPreviewMimeType;
+  bytes: Uint8Array;
+}
+
+export interface ApplyAudioPreviewResult {
+  status: 'applied' | 'cancelled';
+  sound: GameSoundSlot;
+  relativePath?: string;
+}
+
+export interface ProjectAudioOverrideSnapshot {
+  projectId: string;
+  overrides: Record<GameSoundSlot, boolean>;
+}
+
+export interface RestoreProjectAudioInput {
+  projectId: string;
+  sound: GameSoundSlot;
+}
+
+export interface RestoreProjectAudioResult {
+  status: 'restored' | 'cancelled' | 'unchanged';
+  sound: GameSoundSlot;
 }
 
 export interface AppSettings {
@@ -345,9 +473,11 @@ export interface BootstrapState {
 }
 
 export interface CreateProjectInput {
+  creationMode?: 'template' | 'ai';
   name: string;
   directory: string;
   prompt: string;
+  starterTemplateId?: StarterTemplateId;
 }
 
 export interface StartAgentInput {
@@ -370,7 +500,17 @@ export interface FileContent {
   truncated: boolean;
 }
 
+export interface RemoveProjectInput {
+  projectId: string;
+  mode: 'list-only' | 'trash';
+}
+export interface RemoveProjectResult {
+  projectId: string;
+  removed: boolean;
+}
+
 export interface GameAgentAPI {
+  removeProject(input: RemoveProjectInput): Promise<RemoveProjectResult>;
   bootstrap(): Promise<BootstrapState>;
   chooseDirectory(): Promise<string | null>;
   createProject(input: CreateProjectInput): Promise<ProjectRecord>;
@@ -381,12 +521,37 @@ export interface GameAgentAPI {
   testProviderConnection(
     input: ProviderConnectionInput,
   ): Promise<ProviderConnectionResult>;
+  generateAudioPreview(
+    input: GenerateAudioPreviewInput,
+  ): Promise<AudioPreviewBatchResult>;
+  cancelAudioPreviewGeneration(): Promise<CancelAudioPreviewResult>;
+  onAudioPreviewProgress(
+    callback: (progress: AudioPreviewProgress) => void,
+  ): () => void;
+  applyAudioPreview(
+    input: ApplyAudioPreviewInput,
+  ): Promise<ApplyAudioPreviewResult>;
+  loadProjectAudioOverrides(
+    projectId: string,
+  ): Promise<ProjectAudioOverrideSnapshot>;
+  restoreProjectAudio(
+    input: RestoreProjectAudioInput,
+  ): Promise<RestoreProjectAudioResult>;
   loadApiUsage(): Promise<ApiUsageSnapshot>;
+  loadApiCosts(
+    projectId: string | null,
+  ): Promise<import('./apiCost.js').CostSnapshot>;
+  saveApiCostSettings(
+    settings: import('./apiCost.js').CostSettings,
+  ): Promise<void>;
   inspectDependencies(): Promise<DesktopDependency[]>;
   runDependencyAction(
     input: DependencyActionInput,
   ): Promise<DependencyActionResult | null>;
   startAgent(input: StartAgentInput): Promise<{ accepted: boolean }>;
+  decideProposal(
+    input: import('./modificationProposal.js').ProposalDecisionInput,
+  ): Promise<{ accepted: boolean }>;
   stopAgent(projectId: string): Promise<void>;
   loadAgentHistory(projectId: string): Promise<AgentHistoryResult>;
   listFiles(projectId: string): Promise<FileNode[]>;

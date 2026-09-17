@@ -22,7 +22,10 @@ import {
   type CommandRunner,
   type DependencyOutputListener,
 } from './dependencyManager.js';
-import type { StarterPreparationPhase } from '../shared/types.js';
+import type {
+  StarterPreparationPhase,
+  StarterTemplateId,
+} from '../shared/types.js';
 
 const INSTALL_TIMEOUT_MS = 15 * 60_000;
 const VALIDATE_TIMEOUT_MS = 2 * 60_000;
@@ -185,6 +188,7 @@ export class FixedProjectProvisioner {
     projectDirectory: string,
     signal?: AbortSignal,
     reportPhase?: FixedProjectPreparationReporter,
+    starterTemplateId?: StarterTemplateId,
   ): Promise<FixedProjectProvisionResult> {
     throwIfDependencyInspectionAborted(signal);
     const rootInfo = await lstat(projectDirectory);
@@ -218,6 +222,25 @@ export class FixedProjectProvisioner {
       preserved: new Set<string>(),
     };
 
+    const foundation = starterTemplateId === 'ai-foundation';
+    // Seed content takes precedence before the shared engine is copied. On
+    // retries copyFile preserves all already-existing user files.
+    if (foundation) {
+      await this.copyTree(
+        path.join(
+          this.locations.templatesDir,
+          'variants',
+          'ai-foundation',
+          'src',
+        ),
+        path.join(projectRoot, 'src'),
+        projectRoot,
+        context,
+        undefined,
+        signal,
+      );
+    }
+
     await this.copyTree(
       path.join(this.locations.templatesDir, 'core'),
       projectRoot,
@@ -225,6 +248,7 @@ export class FixedProjectProvisioner {
       context,
       undefined,
       signal,
+      foundation,
     );
     await this.copyTree(
       path.join(this.locations.templatesDir, 'modules', 'platformer', 'src'),
@@ -233,7 +257,31 @@ export class FixedProjectProvisioner {
       context,
       path.join(this.locations.templatesDir, 'core', 'src'),
       signal,
+      foundation,
     );
+    if (starterTemplateId === 'zero-factory-escape') {
+      const variantRoot = path.join(
+        this.locations.templatesDir,
+        'variants',
+        starterTemplateId,
+      );
+      await this.copyTree(
+        path.join(variantRoot, 'src'),
+        path.join(projectRoot, 'src'),
+        projectRoot,
+        context,
+        undefined,
+        signal,
+      );
+      await this.copyTree(
+        path.join(variantRoot, 'public'),
+        path.join(projectRoot, 'public'),
+        projectRoot,
+        context,
+        undefined,
+        signal,
+      );
+    }
     await this.copyFile(
       path.join(this.locations.docsDir, 'gdd', 'core.md'),
       path.join(projectRoot, 'docs', 'gdd', 'core.md'),
@@ -549,6 +597,7 @@ export class FixedProjectProvisioner {
     context: CopyContext,
     replaceFromDirectory?: string,
     signal?: AbortSignal,
+    foundation = false,
   ): Promise<void> {
     throwIfDependencyInspectionAborted(signal);
     const sourceInfo = await lstat(source).catch(() => undefined);
@@ -560,6 +609,22 @@ export class FixedProjectProvisioner {
     for (const entry of entries) {
       const sourcePath = path.join(source, entry.name);
       const destinationPath = path.join(destination, entry.name);
+      if (foundation) {
+        const relative = path
+          .relative(projectRoot, destinationPath)
+          .split(path.sep)
+          .join('/');
+        if (
+          relative === 'public/assets/images' ||
+          [
+            'src/levels.json',
+            'src/level.json',
+            'src/gameInfo.json',
+            'src/visualStyle.json',
+          ].includes(relative)
+        )
+          continue;
+      }
       if (entry.isSymbolicLink()) {
         throw new Error(`固定横版脚手架不允许符号链接：${sourcePath}`);
       }
@@ -573,6 +638,7 @@ export class FixedProjectProvisioner {
             ? path.join(replaceFromDirectory, entry.name)
             : undefined,
           signal,
+          foundation,
         );
       } else if (entry.isFile()) {
         await this.copyFile(

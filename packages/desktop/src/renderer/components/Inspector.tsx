@@ -915,6 +915,26 @@ export function PlaytestSummary({
             {report.collectedCoinIds.length} / {report.totalCoins}
           </dd>
         </div>
+        {report.collectedKeycardIds.length > 0 ||
+        report.unlockedSecurityDoorIds.length > 0 ? (
+          <div>
+            <dt>门禁</dt>
+            <dd>
+              门卡 {report.collectedKeycardIds.length} · 已开门{' '}
+              {report.unlockedSecurityDoorIds.length}
+            </dd>
+          </div>
+        ) : null}
+        {report.activatedFloorSwitchIds.length > 0 ||
+        report.disabledLaserGateIds.length > 0 ? (
+          <div>
+            <dt>机关</dt>
+            <dd>
+              开关 {report.activatedFloorSwitchIds.length} · 已关激光{' '}
+              {report.disabledLaserGateIds.length}
+            </dd>
+          </div>
+        ) : null}
         <div>
           <dt>死亡</dt>
           <dd>{report.deaths}</dd>

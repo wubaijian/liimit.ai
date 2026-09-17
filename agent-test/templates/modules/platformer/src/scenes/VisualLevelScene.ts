@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import bundledGameInfo from '../gameInfo.json';
 import bundledLevel from '../level.json';
 import bundledCampaign from '../levels.json';
+import visualStyle from '../visualStyle.json';
 import { decideBasicPlaytestAction } from '../playtestBot';
 import {
   formatStarRating,
@@ -17,6 +18,7 @@ import {
 } from '../levelProgress';
 import {
   type GamePreferences,
+  getNextSoundVolume,
   loadGamePreferences,
   saveGamePreferences,
 } from '../gamePreferences';
@@ -25,12 +27,114 @@ import {
   getLevelSelectionPage,
   LEVELS_PER_SELECTION_PAGE,
 } from '../levelSelection';
+import { LOCAL_SFX, mayPlayLocalSfx, type LocalSfxName } from '../localSfx';
 
 const LIVE_LEVEL_CACHE_KEY = 'liimit-live-level';
 const LIVE_LEVEL_URL = '/__liimit/levels.json';
 const LIVE_GAME_INFO_CACHE_KEY = 'liimit-live-game-info';
 const LIVE_GAME_INFO_URL = '/__liimit/game-info.json';
 const PLAYTEST_POSITION_INTERVAL_MS = 250;
+const FIRE_MOUNTAIN_BACKGROUND_KEY = 'fire-mountain-cavern-background';
+const FIRE_MOUNTAIN_BACKGROUND_PATH =
+  '/assets/images/fire-mountain/volcano-cavern-bg.png';
+const FIRE_MOUNTAIN_ANIMATION_ASSETS = {
+  hero: {
+    textureKey: 'fire-mountain-polar-bear-run-sheet',
+    animationKey: 'fire-mountain-polar-bear-run',
+    path: '/assets/images/fire-mountain/characters/polar-bear-run-3f.png',
+    frameRate: 8,
+  },
+  slime: {
+    textureKey: 'fire-mountain-lava-slime-sheet',
+    animationKey: 'fire-mountain-lava-slime-bounce',
+    path: '/assets/images/fire-mountain/characters/lava-slime-bounce-3f.png',
+    frameRate: 5,
+  },
+  bee: {
+    textureKey: 'fire-mountain-fire-bee-sheet',
+    animationKey: 'fire-mountain-fire-bee-fly',
+    path: '/assets/images/fire-mountain/characters/fire-bee-fly-3f.png',
+    frameRate: 9,
+  },
+} as const;
+const FIRE_MOUNTAIN_FRAME_SIZE = 724;
+
+const IS_CUSTOM_GAME = visualStyle.mode === 'custom';
+const IS_ZERO_FACTORY =
+  !IS_CUSTOM_GAME && bundledGameInfo.title === '零号工厂逃生';
+const CUSTOM_KEYS = {
+  background: 'custom-background',
+  player: 'custom-player',
+  slime: 'custom-slime',
+  bee: 'custom-bee',
+} as const;
+const ZERO_FACTORY_BACKGROUND_KEY = 'zero-factory-background';
+const ZERO_FACTORY_BACKGROUND_PATH =
+  '/assets/factory/zero-factory-background.png';
+const ZERO_FACTORY_ANIMATION_ASSETS = {
+  heroIdle: {
+    textureKey: 'zero-factory-hero-idle-sheet',
+    animationKey: 'zero-factory-hero-idle',
+    path: '/assets/factory/hero-idle-3f.png',
+    frameWidth: 591,
+    frameHeight: 887,
+    frameRate: 3,
+  },
+  heroRun: {
+    textureKey: 'zero-factory-hero-run-sheet',
+    animationKey: 'zero-factory-hero-run',
+    path: '/assets/factory/hero-run-3f.png',
+    frameWidth: 512,
+    frameHeight: 1024,
+    frameRate: 8,
+  },
+  heroJump: {
+    textureKey: 'zero-factory-hero-jump-sheet',
+    animationKey: 'zero-factory-hero-jump',
+    path: '/assets/factory/hero-jump-3f.png',
+    frameWidth: 572,
+    frameHeight: 916,
+    frameRate: 5,
+  },
+  enemyPatrol: {
+    textureKey: 'zero-factory-enemy-patrol-sheet',
+    animationKey: 'zero-factory-enemy-patrol',
+    path: '/assets/factory/enemy-patrol-3f.png',
+    frameWidth: 591,
+    frameHeight: 887,
+    frameRate: 6,
+  },
+  enemyAlert: {
+    textureKey: 'zero-factory-enemy-alert-sheet',
+    animationKey: 'zero-factory-enemy-alert',
+    path: '/assets/factory/enemy-alert-3f.png',
+    frameWidth: 591,
+    frameHeight: 887,
+    frameRate: 7,
+  },
+} as const;
+
+const FIRE_MOUNTAIN_COLORS = {
+  basalt: 0x20293a,
+  basaltDeep: 0x111827,
+  mineralGold: 0xf2b84b,
+  mineralLight: 0xffdc7a,
+  lava: 0xf05a28,
+  lavaLight: 0xffb02e,
+  iceBlue: 0x9de8ff,
+  iceBlueDeep: 0x286a8a,
+  ...(IS_CUSTOM_GAME ? visualStyle.colors : {}),
+} as const;
+
+const ZERO_FACTORY_COLORS = {
+  steel: 0x17263a,
+  steelDeep: 0x09131f,
+  warningYellow: 0xf6c945,
+  warningLight: 0xffe69a,
+  energyCyan: 0x4de1ff,
+  energyDeep: 0x17677c,
+  hazardRed: 0xe65c4f,
+} as const;
 
 type LevelObjectType =
   | 'player-spawn'
@@ -40,6 +144,10 @@ type LevelObjectType =
   | 'slime'
   | 'bee'
   | 'coin'
+  | 'keycard'
+  | 'security-door'
+  | 'floor-switch'
+  | 'laser-gate'
   | 'checkpoint'
   | 'goal'
   | 'pit';
@@ -101,19 +209,52 @@ interface GameInfo {
 interface MovingPlatformRuntime {
   objectId: string;
   rectangle: Phaser.GameObjects.Rectangle;
+  indicator: Phaser.GameObjects.Text;
+  axis: 'horizontal' | 'vertical';
+  minimum: number;
+  maximum: number;
+  speed: number;
+  position: number;
+  direction: 1 | -1;
+}
+
+interface EnemyRuntime {
+  objectId: string;
+  enemy: Phaser.GameObjects.Ellipse;
+  visual: Phaser.GameObjects.Image | Phaser.GameObjects.Sprite;
+  isFlying: boolean;
+  isPursuer: boolean;
+  label?: Phaser.GameObjects.Text;
   axis: 'horizontal' | 'vertical';
   minimum: number;
   maximum: number;
   speed: number;
 }
 
-interface EnemyRuntime {
+interface SecurityDoorRuntime {
   objectId: string;
-  enemy: Phaser.GameObjects.Ellipse;
-  axis: 'horizontal' | 'vertical';
-  minimum: number;
-  maximum: number;
-  speed: number;
+  door: Phaser.GameObjects.Rectangle;
+  seam: Phaser.GameObjects.Rectangle;
+  light: Phaser.GameObjects.Arc;
+  label: Phaser.GameObjects.Text;
+}
+
+interface FloorSwitchRuntime {
+  objectId: string;
+  sensor: Phaser.GameObjects.Rectangle;
+  plate: Phaser.GameObjects.Rectangle;
+  light: Phaser.GameObjects.Arc;
+  label: Phaser.GameObjects.Text;
+  activated: boolean;
+}
+
+interface LaserGateRuntime {
+  objectId: string;
+  sensor: Phaser.GameObjects.Rectangle;
+  frame: Phaser.GameObjects.Rectangle;
+  beams: Phaser.GameObjects.Rectangle[];
+  light: Phaser.GameObjects.Arc;
+  label: Phaser.GameObjects.Text;
 }
 
 type PlaytestEvent =
@@ -130,6 +271,10 @@ type PlaytestEvent =
   | { type: 'position'; x: number; y: number }
   | { type: 'jumped'; x: number; y: number }
   | { type: 'coin-collected'; objectId: string; x: number; y: number }
+  | { type: 'keycard-collected'; objectId: string; x: number; y: number }
+  | { type: 'security-door-unlocked'; objectId: string; x: number; y: number }
+  | { type: 'floor-switch-activated'; objectId: string; x: number; y: number }
+  | { type: 'laser-gate-disabled'; objectId: string; x: number; y: number }
   | { type: 'died'; objectId: string; x: number; y: number }
   | { type: 'completed'; x: number; y: number }
   | {
@@ -142,6 +287,7 @@ type PlaytestEvent =
 
 export class VisualLevelScene extends Phaser.Scene {
   private player!: Phaser.GameObjects.Rectangle;
+  private playerVisual?: Phaser.GameObjects.Image | Phaser.GameObjects.Sprite;
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private wasd!: Record<'W' | 'A' | 'D', Phaser.Input.Keyboard.Key>;
   private remainingCoins = 0;
@@ -153,6 +299,17 @@ export class VisualLevelScene extends Phaser.Scene {
   private pits: LevelObject[] = [];
   private movingPlatforms: MovingPlatformRuntime[] = [];
   private enemies: EnemyRuntime[] = [];
+  private factoryGears: Phaser.GameObjects.Star[] = [];
+  private securityDoors: SecurityDoorRuntime[] = [];
+  private floorSwitches: FloorSwitchRuntime[] = [];
+  private laserGates: LaserGateRuntime[] = [];
+  private activatedFloorSwitches = 0;
+  private hasKeycard = false;
+  private keycardLabel?: Phaser.GameObjects.Text;
+  private switchLabel?: Phaser.GameObjects.Text;
+  private doorNotice?: Phaser.GameObjects.Text;
+  private doorNoticeAvailableAt = 0;
+  private pursuitStartAt = Number.POSITIVE_INFINITY;
   private activeCheckpointId?: string;
   private checkpointRegistryKey = '';
   private livesRegistryKey = '';
@@ -164,6 +321,8 @@ export class VisualLevelScene extends Phaser.Scene {
   private preferences: GamePreferences = {
     showGrid: true,
     showControlHints: true,
+    soundEnabled: true,
+    soundVolume: 1,
   };
   private mainMenuOpen = false;
   private mainMenuObjects: Phaser.GameObjects.GameObject[] = [];
@@ -180,17 +339,93 @@ export class VisualLevelScene extends Phaser.Scene {
   private lastAutoJumpAt = Number.NEGATIVE_INFINITY;
   private autoJumpActionUntil = 0;
   private hasUsedAirJump = false;
+  private readonly lastSfxPlayedAt = new Map<LocalSfxName, number>();
 
   constructor() {
     super('Level1Scene');
   }
 
+  private drawGameBackground(): void {
+    if (IS_CUSTOM_GAME) {
+      this.cameras.main.setBackgroundColor(visualStyle.backgroundColor);
+      if (this.textures.exists(CUSTOM_KEYS.background)) {
+        this.add
+          .image(
+            this.scale.width / 2,
+            this.scale.height / 2,
+            CUSTOM_KEYS.background,
+          )
+          .setDisplaySize(this.scale.width, this.scale.height)
+          .setScrollFactor(0)
+          .setDepth(-20);
+      }
+      return;
+    }
+    this.add
+      .image(
+        this.scale.width / 2,
+        this.scale.height / 2,
+        IS_ZERO_FACTORY
+          ? ZERO_FACTORY_BACKGROUND_KEY
+          : FIRE_MOUNTAIN_BACKGROUND_KEY,
+      )
+      .setDisplaySize(this.scale.width, this.scale.height)
+      .setScrollFactor(0)
+      .setDepth(-20);
+    this.add
+      .rectangle(
+        this.scale.width / 2,
+        this.scale.height / 2,
+        this.scale.width,
+        this.scale.height,
+        IS_ZERO_FACTORY ? 0x07111d : 0x070b14,
+        IS_ZERO_FACTORY ? 0.08 : 0.18,
+      )
+      .setScrollFactor(0)
+      .setDepth(-19);
+  }
+
   preload(): void {
     this.load.json(LIVE_LEVEL_CACHE_KEY, LIVE_LEVEL_URL);
     this.load.json(LIVE_GAME_INFO_CACHE_KEY, LIVE_GAME_INFO_URL);
+    if (IS_CUSTOM_GAME) {
+      for (const [slot, key] of Object.entries(CUSTOM_KEYS)) {
+        const url = visualStyle.images[slot as keyof typeof CUSTOM_KEYS];
+        // Game assets are local to this project; no remote image requests.
+        if (url && /^\/?assets\//.test(url) && !url.includes('..'))
+          this.load.image(key, url);
+      }
+    } else {
+      this.load.image(
+        FIRE_MOUNTAIN_BACKGROUND_KEY,
+        FIRE_MOUNTAIN_BACKGROUND_PATH,
+      );
+      for (const asset of Object.values(FIRE_MOUNTAIN_ANIMATION_ASSETS)) {
+        this.load.spritesheet(asset.textureKey, asset.path, {
+          frameWidth: FIRE_MOUNTAIN_FRAME_SIZE,
+          frameHeight: FIRE_MOUNTAIN_FRAME_SIZE,
+        });
+      }
+      if (IS_ZERO_FACTORY) {
+        this.load.image(
+          ZERO_FACTORY_BACKGROUND_KEY,
+          ZERO_FACTORY_BACKGROUND_PATH,
+        );
+        for (const asset of Object.values(ZERO_FACTORY_ANIMATION_ASSETS)) {
+          this.load.spritesheet(asset.textureKey, asset.path, {
+            frameWidth: asset.frameWidth,
+            frameHeight: asset.frameHeight,
+          });
+        }
+      }
+    }
+    for (const sound of Object.values(LOCAL_SFX)) {
+      this.load.audio(sound.assetKey, sound.path);
+    }
   }
 
   create(): void {
+    if (IS_CUSTOM_GAME) this.createCustomFallbackTextures();
     this.remainingCoins = 0;
     this.completed = false;
     this.restarting = false;
@@ -201,6 +436,13 @@ export class VisualLevelScene extends Phaser.Scene {
     this.pauseMenuOpen = false;
     this.pauseMenuObjects = [];
     this.pauseButton = undefined;
+    this.playerVisual = undefined;
+    this.keycardLabel = undefined;
+    this.switchLabel = undefined;
+    this.doorNotice = undefined;
+    this.hasKeycard = false;
+    this.activatedFloorSwitches = 0;
+    this.doorNoticeAvailableAt = 0;
     this.lastPositionEventAt = 0;
     this.campaign = readLevelCampaign(
       this.cache.json.get(LIVE_LEVEL_CACHE_KEY) ?? bundledCampaign,
@@ -257,15 +499,13 @@ export class VisualLevelScene extends Phaser.Scene {
     this.lastAutoJumpAt = Number.NEGATIVE_INFINITY;
     this.autoJumpActionUntil = 0;
     this.hasUsedAirJump = false;
+    this.lastSfxPlayedAt.clear();
     this.physics.world.setBounds(0, 0, level.width, level.height);
     this.physics.world.setBoundsCollision(true, true, true, false);
     this.cameras.main.setBounds(0, 0, level.width, level.height);
-    this.cameras.main.setBackgroundColor('#14222d');
-
-    this.add
-      .rectangle(0, 0, level.width, level.height, 0x14222d)
-      .setOrigin(0, 0)
-      .setDepth(-10);
+    this.cameras.main.setBackgroundColor('#090d18');
+    this.drawGameBackground();
+    this.createCharacterAnimations();
     if (this.preferences.showGrid) this.drawGrid(level);
 
     const platforms = this.physics.add.staticGroup();
@@ -279,19 +519,37 @@ export class VisualLevelScene extends Phaser.Scene {
       immovable: true,
     });
     const coins = this.physics.add.staticGroup();
+    const keycards = this.physics.add.staticGroup();
+    const securityDoors = this.physics.add.staticGroup();
+    const floorSwitches = this.physics.add.staticGroup();
+    const laserGates = this.physics.add.staticGroup();
     const checkpoints = this.physics.add.staticGroup();
     const goals = this.physics.add.staticGroup();
     let spawn = level.objects.find((object) => object.type === 'player-spawn')!;
     this.pits = level.objects.filter((object) => object.type === 'pit');
     this.movingPlatforms = [];
     this.enemies = [];
+    this.factoryGears = [];
+    this.securityDoors = [];
+    this.floorSwitches = [];
+    this.laserGates = [];
+    this.pursuitStartAt = this.time.now + 1_800;
 
     for (const object of level.objects) {
       if (object.type === 'player-spawn') {
         spawn = object;
       } else if (object.type === 'platform') {
         for (const segment of splitPlatformAroundPits(object, this.pits)) {
-          this.addStaticRectangle(platforms, segment, 0x596d4a, 0x92b476);
+          this.addStaticRectangle(
+            platforms,
+            segment,
+            IS_ZERO_FACTORY
+              ? ZERO_FACTORY_COLORS.steel
+              : FIRE_MOUNTAIN_COLORS.basalt,
+            IS_ZERO_FACTORY
+              ? ZERO_FACTORY_COLORS.warningYellow
+              : FIRE_MOUNTAIN_COLORS.mineralGold,
+          );
         }
       } else if (object.type === 'moving-platform') {
         this.addMovingPlatform(movingPlatformGroup, object, level);
@@ -301,6 +559,14 @@ export class VisualLevelScene extends Phaser.Scene {
         this.addEnemy(enemies, object, level);
       } else if (object.type === 'coin') {
         this.addCoin(coins, object);
+      } else if (object.type === 'keycard') {
+        this.addKeycard(keycards, object);
+      } else if (object.type === 'security-door') {
+        this.addSecurityDoor(securityDoors, object);
+      } else if (object.type === 'floor-switch') {
+        this.addFloorSwitch(floorSwitches, object);
+      } else if (object.type === 'laser-gate') {
+        this.addLaserGate(laserGates, object);
       } else if (object.type === 'checkpoint') {
         this.addCheckpoint(checkpoints, object);
       } else if (object.type === 'goal') {
@@ -326,16 +592,76 @@ export class VisualLevelScene extends Phaser.Scene {
       spawn.height,
       0x70c2f2,
     );
-    this.player.setStrokeStyle(3, 0xc8efff);
+    this.player.setAlpha(0);
     this.physics.add.existing(this.player);
     const playerBody = this.player.body as Phaser.Physics.Arcade.Body;
     playerBody.setCollideWorldBounds(true);
     playerBody.setMaxVelocity(320, 900);
+    this.playerVisual = IS_CUSTOM_GAME
+      ? this.add
+          .image(this.player.x, this.player.y, CUSTOM_KEYS.player)
+          .setDisplaySize(spawn.width, spawn.height)
+          .setDepth(8)
+      : IS_ZERO_FACTORY
+        ? this.add
+            .sprite(
+              this.player.x,
+              this.player.y - 8,
+              ZERO_FACTORY_ANIMATION_ASSETS.heroIdle.textureKey,
+            )
+            .setDisplaySize(spawn.width * 1.55, spawn.height * 1.55)
+            .setDepth(8)
+            .play(ZERO_FACTORY_ANIMATION_ASSETS.heroIdle.animationKey)
+        : this.add
+            .sprite(
+              this.player.x,
+              this.player.y - 8,
+              FIRE_MOUNTAIN_ANIMATION_ASSETS.hero.textureKey,
+            )
+            .setDisplaySize(spawn.width * 1.45, spawn.height * 1.36)
+            .setDepth(8)
+            .setFrame(1);
+
+    const pursuer = this.enemies.find((enemy) => enemy.isPursuer);
+    if (pursuer) {
+      if (activeCheckpoint) {
+        const restartX = Math.max(32, this.player.x - 400);
+        pursuer.enemy.setPosition(restartX, pursuer.enemy.y);
+        pursuer.visual.setPosition(restartX - 280, pursuer.enemy.y);
+      }
+      const pursuitWarning = this.add
+        .text(
+          this.cameras.main.width / 2,
+          112,
+          '岩浆巨兽正在追赶！不要停下！',
+          {
+            color: '#fff4d6',
+            backgroundColor: '#b9381f',
+            fontFamily: 'monospace',
+            fontSize: '18px',
+            padding: { x: 16, y: 9 },
+          },
+        )
+        .setOrigin(0.5, 0)
+        .setScrollFactor(0)
+        .setDepth(110);
+      this.tweens.add({
+        targets: pursuitWarning,
+        alpha: 0,
+        delay: 2_200,
+        duration: 600,
+        onComplete: () => pursuitWarning.destroy(),
+      });
+    }
 
     this.physics.add.collider(this.player, platforms);
     this.physics.add.collider(this.player, movingPlatformGroup);
+    this.physics.add.collider(this.player, securityDoors, () => {
+      if (!this.hasKeycard) this.showDoorLockedMessage();
+    });
     this.physics.add.overlap(this.player, coins, (_player, coinObject) => {
       const coin = coinObject as Phaser.GameObjects.GameObject;
+      this.playLocalSfx('coin');
       this.emitPlaytestEvent({
         type: 'coin-collected',
         objectId: String(coin.getData('levelObjectId')),
@@ -343,7 +669,29 @@ export class VisualLevelScene extends Phaser.Scene {
       });
       coin.destroy();
       this.remainingCoins = Math.max(0, this.remainingCoins - 1);
-      this.coinLabel.setText(`金币：${this.remainingCoins}`);
+      this.coinLabel.setText(
+        `${IS_CUSTOM_GAME ? '金币' : IS_ZERO_FACTORY ? '能源' : '晶石'}：${this.remainingCoins}`,
+      );
+    });
+    this.physics.add.overlap(
+      this.player,
+      keycards,
+      (_player, keycardObject) => {
+        if (this.hasKeycard) return;
+        this.collectKeycard(keycardObject as Phaser.GameObjects.Rectangle);
+      },
+    );
+    this.physics.add.overlap(
+      this.player,
+      floorSwitches,
+      (_player, switchObject) => {
+        this.activateFloorSwitch(switchObject as Phaser.GameObjects.Rectangle);
+      },
+    );
+    this.physics.add.overlap(this.player, laserGates, (_player, gateObject) => {
+      if (this.restarting) return;
+      const gate = gateObject as Phaser.GameObjects.GameObject;
+      this.handleDeath(String(gate.getData('levelObjectId')));
     });
     this.physics.add.overlap(
       this.player,
@@ -361,8 +709,18 @@ export class VisualLevelScene extends Phaser.Scene {
     this.physics.add.overlap(this.player, enemies, (_player, enemyObject) => {
       const enemy = enemyObject as Phaser.GameObjects.Ellipse;
       if (this.restarting || !enemy.active) return;
+      if (enemy.getData('isPursuer') === true) {
+        this.handleDeath(String(enemy.getData('levelObjectId')));
+        return;
+      }
       const body = this.player.body as Phaser.Physics.Arcade.Body;
       if (body.velocity.y > 0 && this.player.y < enemy.y) {
+        this.playLocalSfx('enemyHit');
+        const visual = enemy.getData('visual') as
+          | Phaser.GameObjects.Image
+          | Phaser.GameObjects.Sprite
+          | undefined;
+        visual?.destroy();
         enemy.destroy();
         body.setVelocityY(-Math.min(this.abilities.jumpPower * 0.7, 560));
         return;
@@ -388,15 +746,49 @@ export class VisualLevelScene extends Phaser.Scene {
     this.cameras.main.setDeadzone(260, 180);
 
     this.coinLabel = this.add
-      .text(18, 16, `金币：${this.remainingCoins}`, {
-        color: '#ffe08b',
-        fontFamily: 'monospace',
-        fontSize: '20px',
-        stroke: '#081016',
-        strokeThickness: 4,
-      })
+      .text(
+        18,
+        16,
+        `${IS_CUSTOM_GAME ? '金币' : IS_ZERO_FACTORY ? '能源' : '晶石'}：${this.remainingCoins}`,
+        {
+          color: '#ffe08b',
+          fontFamily: 'monospace',
+          fontSize: '20px',
+          stroke: '#081016',
+          strokeThickness: 4,
+        },
+      )
       .setScrollFactor(0)
       .setDepth(100);
+    if (level.objects.some((object) => object.type === 'keycard')) {
+      this.keycardLabel = this.add
+        .text(18, 70, '门卡：未获得', {
+          color: '#9de8ff',
+          fontFamily: 'monospace',
+          fontSize: '15px',
+          stroke: '#081016',
+          strokeThickness: 3,
+        })
+        .setScrollFactor(0)
+        .setDepth(100);
+    }
+    if (level.objects.some((object) => object.type === 'floor-switch')) {
+      this.switchLabel = this.add
+        .text(
+          18,
+          this.keycardLabel ? 96 : 70,
+          `机关：0 / ${this.floorSwitches.length}`,
+          {
+            color: '#ffdf75',
+            fontFamily: 'monospace',
+            fontSize: '15px',
+            stroke: '#081016',
+            strokeThickness: 3,
+          },
+        )
+        .setScrollFactor(0)
+        .setDepth(100);
+    }
     this.add
       .text(
         18,
@@ -432,11 +824,22 @@ export class VisualLevelScene extends Phaser.Scene {
       .setDepth(100);
     if (this.preferences.showControlHints) {
       this.add
-        .text(18, 70, '方向键 / A D 移动 · W / ↑ / 空格跳跃', {
-          color: '#d8e5ec',
-          fontFamily: 'monospace',
-          fontSize: '14px',
-        })
+        .text(
+          18,
+          this.switchLabel
+            ? this.keycardLabel
+              ? 122
+              : 96
+            : this.keycardLabel
+              ? 96
+              : 70,
+          '方向键 / A D 移动 · W / ↑ / 空格跳跃',
+          {
+            color: '#d8e5ec',
+            fontFamily: 'monospace',
+            fontSize: '14px',
+          },
+        )
         .setScrollFactor(0)
         .setDepth(100);
     }
@@ -506,7 +909,9 @@ export class VisualLevelScene extends Phaser.Scene {
     this.emitAutomationState();
   }
 
-  update(): void {
+  update(_time: number, delta: number): void {
+    const body = this.player.body as Phaser.Physics.Arcade.Body;
+    this.updatePlayerVisual(body);
     if (
       this.completed ||
       this.restarting ||
@@ -515,8 +920,9 @@ export class VisualLevelScene extends Phaser.Scene {
       this.pauseMenuOpen
     )
       return;
-    this.updateMovingPlatforms();
+    this.updateMovingPlatforms(delta);
     this.updateEnemies();
+    this.updateFactoryGears(delta);
     if (this.restartIfPlayerFellOutOfBounds()) return;
     if (this.restartIfPlayerFellIntoPit()) return;
     if (
@@ -526,13 +932,93 @@ export class VisualLevelScene extends Phaser.Scene {
       this.lastPositionEventAt = this.time.now;
       this.emitPlaytestEvent({ type: 'position', ...this.playerPosition() });
     }
-    const body = this.player.body as Phaser.Physics.Arcade.Body;
     if (body.blocked.down) this.hasUsedAirJump = false;
     if (this.autoPlaying) {
       this.updateAutoPlay(body);
       return;
     }
     this.updateManualControls(body);
+  }
+
+  private createCharacterAnimations(): void {
+    if (IS_CUSTOM_GAME) return;
+    const assets = IS_ZERO_FACTORY
+      ? ZERO_FACTORY_ANIMATION_ASSETS
+      : FIRE_MOUNTAIN_ANIMATION_ASSETS;
+    for (const asset of Object.values(assets)) {
+      if (this.anims.exists(asset.animationKey)) continue;
+      this.anims.create({
+        key: asset.animationKey,
+        frames: this.anims.generateFrameNumbers(asset.textureKey, {
+          start: 0,
+          end: 2,
+        }),
+        frameRate: asset.frameRate,
+        repeat: -1,
+      });
+    }
+  }
+
+  private createCustomFallbackTextures(): void {
+    for (const slot of ['player', 'slime', 'bee'] as const) {
+      const key = CUSTOM_KEYS[slot];
+      if (this.textures.exists(key)) continue;
+      const graphic = this.add.graphics();
+      graphic.fillStyle(
+        slot === 'player'
+          ? FIRE_MOUNTAIN_COLORS.iceBlue
+          : slot === 'slime'
+            ? FIRE_MOUNTAIN_COLORS.lava
+            : FIRE_MOUNTAIN_COLORS.mineralGold,
+      );
+      graphic.fillRoundedRect(2, 2, 60, 60, slot === 'bee' ? 28 : 8);
+      graphic.generateTexture(key, 64, 64);
+      graphic.destroy();
+    }
+  }
+
+  private updatePlayerVisual(body: Phaser.Physics.Arcade.Body): void {
+    const visual = this.playerVisual;
+    if (!visual?.active) return;
+    const moving = Math.abs(body.velocity.x) > 8;
+    const inAir = !body.blocked.down;
+    if (IS_ZERO_FACTORY && visual instanceof Phaser.GameObjects.Sprite) {
+      if (inAir) {
+        visual.anims.stop();
+        visual.setTexture(
+          ZERO_FACTORY_ANIMATION_ASSETS.heroJump.textureKey,
+          body.velocity.y < -80 ? 0 : body.velocity.y < 120 ? 1 : 2,
+        );
+      } else if (moving) {
+        visual.play(ZERO_FACTORY_ANIMATION_ASSETS.heroRun.animationKey, true);
+      } else {
+        visual.play(ZERO_FACTORY_ANIMATION_ASSETS.heroIdle.animationKey, true);
+      }
+      visual.setDisplaySize(
+        this.player.width * 1.55,
+        this.player.height * 1.55,
+      );
+    } else if (visual instanceof Phaser.GameObjects.Sprite) {
+      if (moving && !inAir) {
+        visual.play(FIRE_MOUNTAIN_ANIMATION_ASSETS.hero.animationKey, true);
+      } else {
+        visual.anims.stop();
+        visual.setTexture(
+          FIRE_MOUNTAIN_ANIMATION_ASSETS.hero.textureKey,
+          inAir ? 0 : 1,
+        );
+      }
+      visual.setDisplaySize(
+        this.player.width * 1.45,
+        this.player.height * 1.36,
+      );
+    }
+    const runningBob = moving && !inAir ? Math.sin(this.time.now / 72) * 2 : 0;
+    visual.setPosition(this.player.x, this.player.y - 8 + runningBob);
+    if (moving) visual.setFlipX(body.velocity.x < 0);
+    visual.setAngle(
+      inAir ? Phaser.Math.Clamp(body.velocity.y / 42, -12, 12) : 0,
+    );
   }
 
   private updateManualControls(body: Phaser.Physics.Arcade.Body): void {
@@ -561,6 +1047,7 @@ export class VisualLevelScene extends Phaser.Scene {
           : this.abilities.doubleJumpPower),
       );
       if (!body.blocked.down) this.hasUsedAirJump = true;
+      this.playLocalSfx('jump');
       this.emitPlaytestEvent({ type: 'jumped', ...this.playerPosition() });
     }
   }
@@ -583,6 +1070,7 @@ export class VisualLevelScene extends Phaser.Scene {
       this.lastAutoJumpAt = this.time.now;
       this.autoJumpActionUntil = this.time.now + 250;
       this.setAutoAction('jump');
+      this.playLocalSfx('jump');
       this.emitPlaytestEvent({ type: 'jumped', ...this.playerPosition() });
       return;
     }
@@ -599,6 +1087,7 @@ export class VisualLevelScene extends Phaser.Scene {
       this.lastAutoJumpAt = this.time.now;
       this.autoJumpActionUntil = this.time.now + 250;
       this.setAutoAction('jump');
+      this.playLocalSfx('jump');
       this.emitPlaytestEvent({ type: 'jumped', ...this.playerPosition() });
       return;
     }
@@ -638,7 +1127,13 @@ export class VisualLevelScene extends Phaser.Scene {
 
   private drawGrid(level: LevelDocument): void {
     const graphics = this.add.graphics().setDepth(-5);
-    graphics.lineStyle(1, 0x6f8796, 0.14);
+    graphics.lineStyle(
+      1,
+      IS_ZERO_FACTORY
+        ? ZERO_FACTORY_COLORS.energyCyan
+        : FIRE_MOUNTAIN_COLORS.mineralLight,
+      IS_ZERO_FACTORY ? 0.075 : 0.1,
+    );
     for (let x = 0; x <= level.width; x += level.gridSize) {
       graphics.lineBetween(x, 0, x, level.height);
     }
@@ -648,16 +1143,94 @@ export class VisualLevelScene extends Phaser.Scene {
   }
 
   private drawPit(object: LevelObject): void {
+    if (IS_CUSTOM_GAME) {
+      this.add
+        .rectangle(
+          object.x + object.width / 2,
+          object.y + object.height / 2,
+          object.width,
+          object.height,
+          FIRE_MOUNTAIN_COLORS.basaltDeep,
+        )
+        .setStrokeStyle(2, FIRE_MOUNTAIN_COLORS.lava)
+        .setDepth(-3);
+      return;
+    }
+    if (IS_ZERO_FACTORY) {
+      this.add
+        .rectangle(
+          object.x + object.width / 2,
+          object.y + object.height / 2,
+          object.width,
+          object.height,
+          ZERO_FACTORY_COLORS.steelDeep,
+        )
+        .setStrokeStyle(3, ZERO_FACTORY_COLORS.hazardRed)
+        .setDepth(-3);
+      const stripeCount = Math.max(2, Math.floor(object.width / 48));
+      for (let index = 0; index < stripeCount; index += 1) {
+        this.add
+          .rectangle(
+            object.x + ((index + 0.5) * object.width) / stripeCount,
+            object.y + 7,
+            Math.max(14, object.width / stripeCount - 12),
+            9,
+            index % 2 === 0
+              ? ZERO_FACTORY_COLORS.warningYellow
+              : ZERO_FACTORY_COLORS.hazardRed,
+          )
+          .setDepth(-2);
+      }
+      this.add
+        .text(
+          object.x + object.width / 2,
+          object.y + object.height / 2 + 5,
+          '⚠ 设备坠落区',
+          {
+            color: '#ffcbc4',
+            fontFamily: 'monospace',
+            fontSize: '13px',
+          },
+        )
+        .setOrigin(0.5)
+        .setDepth(-1);
+      return;
+    }
+    this.add
+      .rectangle(
+        object.x + object.width / 2,
+        object.y + object.height / 2,
+        object.width + 18,
+        object.height + 12,
+        FIRE_MOUNTAIN_COLORS.lava,
+        0.2,
+      )
+      .setDepth(-4);
     this.add
       .rectangle(
         object.x + object.width / 2,
         object.y + object.height / 2,
         object.width,
         object.height,
-        0x071018,
+        FIRE_MOUNTAIN_COLORS.lava,
       )
-      .setStrokeStyle(3, 0xd66559)
+      .setStrokeStyle(3, FIRE_MOUNTAIN_COLORS.lavaLight)
       .setDepth(-3);
+
+    const bubbleCount = Math.max(2, Math.floor(object.width / 96));
+    for (let index = 0; index < bubbleCount; index += 1) {
+      const x = object.x + ((index + 0.5) * object.width) / bubbleCount;
+      const radius = index % 2 === 0 ? 5 : 3;
+      this.add
+        .circle(
+          x,
+          object.y + 8 + (index % 3) * 5,
+          radius,
+          FIRE_MOUNTAIN_COLORS.lavaLight,
+          0.9,
+        )
+        .setDepth(-2);
+    }
   }
 
   private restartIfPlayerFellIntoPit(): boolean {
@@ -677,6 +1250,7 @@ export class VisualLevelScene extends Phaser.Scene {
   private handleDeath(objectId: string): void {
     if (this.restarting) return;
     this.restarting = true;
+    this.playLocalSfx('death');
     this.deathCount += 1;
     this.registry.set(this.deathsRegistryKey, this.deathCount);
     const outcome = getDeathOutcome(this.remainingLives);
@@ -732,6 +1306,45 @@ export class VisualLevelScene extends Phaser.Scene {
     rectangle.setStrokeStyle(3, stroke);
     this.physics.add.existing(rectangle, true);
     group.add(rectangle);
+
+    const mineralEdgeHeight = Math.min(7, Math.max(3, object.height * 0.2));
+    this.add
+      .rectangle(
+        object.x + object.width / 2,
+        object.y + mineralEdgeHeight / 2 + 2,
+        Math.max(4, object.width - 8),
+        mineralEdgeHeight,
+        FIRE_MOUNTAIN_COLORS.mineralGold,
+      )
+      .setStrokeStyle(1, FIRE_MOUNTAIN_COLORS.mineralLight, 0.75);
+
+    if (object.width >= 96 && object.height >= 24) {
+      if (IS_ZERO_FACTORY) {
+        const rivetCount = Math.max(2, Math.floor(object.width / 96));
+        for (let index = 0; index < rivetCount; index += 1) {
+          this.add
+            .circle(
+              object.x + ((index + 0.5) * object.width) / rivetCount,
+              object.y + object.height / 2 + 5,
+              3,
+              ZERO_FACTORY_COLORS.energyDeep,
+            )
+            .setStrokeStyle(1, ZERO_FACTORY_COLORS.energyCyan, 0.72);
+        }
+        return;
+      }
+      const crack = this.add.graphics();
+      crack.lineStyle(2, FIRE_MOUNTAIN_COLORS.basaltDeep, 0.72);
+      const crackX =
+        object.x + Math.min(object.width - 24, object.width * 0.68);
+      const crackY = object.y + mineralEdgeHeight + 4;
+      crack.beginPath();
+      crack.moveTo(crackX, crackY);
+      crack.lineTo(crackX - 8, crackY + 7);
+      crack.lineTo(crackX + 2, crackY + 14);
+      crack.lineTo(crackX - 4, crackY + 20);
+      crack.strokePath();
+    }
   }
 
   private addMovingPlatform(
@@ -744,9 +1357,9 @@ export class VisualLevelScene extends Phaser.Scene {
       object.y + object.height / 2,
       object.width,
       object.height,
-      0x47798c,
+      FIRE_MOUNTAIN_COLORS.iceBlueDeep,
     );
-    rectangle.setStrokeStyle(3, 0x7bd2ea);
+    rectangle.setStrokeStyle(5, FIRE_MOUNTAIN_COLORS.iceBlue).setDepth(5);
     rectangle.setData('levelObjectId', object.id);
     this.physics.add.existing(rectangle);
     const body = rectangle.body as Phaser.Physics.Arcade.Body;
@@ -772,6 +1385,35 @@ export class VisualLevelScene extends Phaser.Scene {
         : level.height - halfHeight,
       center + travel,
     );
+    const track = this.add.graphics().setDepth(3);
+    track.lineStyle(4, FIRE_MOUNTAIN_COLORS.iceBlue, 0.45);
+    if (movement.axis === 'horizontal') {
+      track.lineBetween(minimum, rectangle.y, maximum, rectangle.y);
+      track.fillStyle(FIRE_MOUNTAIN_COLORS.iceBlue, 0.75);
+      track.fillCircle(minimum, rectangle.y, 5);
+      track.fillCircle(maximum, rectangle.y, 5);
+    } else {
+      track.lineBetween(rectangle.x, minimum, rectangle.x, maximum);
+      track.fillStyle(FIRE_MOUNTAIN_COLORS.iceBlue, 0.75);
+      track.fillCircle(rectangle.x, minimum, 5);
+      track.fillCircle(rectangle.x, maximum, 5);
+    }
+    const indicator = this.add
+      .text(
+        rectangle.x,
+        rectangle.y - 1,
+        movement.axis === 'horizontal' ? '↔' : '↕',
+        {
+          color: '#ffffff',
+          fontFamily: 'monospace',
+          fontSize: '20px',
+          fontStyle: 'bold',
+          stroke: '#17475d',
+          strokeThickness: 4,
+        },
+      )
+      .setOrigin(0.5)
+      .setDepth(6);
     if (movement.axis === 'horizontal') {
       body.setVelocityX(minimum === maximum ? 0 : movement.speed);
     } else {
@@ -781,33 +1423,104 @@ export class VisualLevelScene extends Phaser.Scene {
     this.movingPlatforms.push({
       objectId: object.id,
       rectangle,
+      indicator,
       axis: movement.axis,
       minimum,
       maximum,
       speed: movement.speed,
+      position: center,
+      direction: 1,
     });
   }
 
-  private updateMovingPlatforms(): void {
+  private updateMovingPlatforms(delta: number): void {
     for (const platform of this.movingPlatforms) {
       const body = platform.rectangle.body as Phaser.Physics.Arcade.Body;
-      const position =
-        platform.axis === 'horizontal'
-          ? platform.rectangle.x
-          : platform.rectangle.y;
-      const velocity =
-        position <= platform.minimum ? platform.speed : -platform.speed;
-      if (position <= platform.minimum || position >= platform.maximum) {
-        if (platform.axis === 'horizontal') body.setVelocityX(velocity);
-        else body.setVelocityY(velocity);
+      const frameSeconds = Math.min(Math.max(delta, 0), 50) / 1_000;
+      let nextPosition =
+        platform.position + platform.direction * platform.speed * frameSeconds;
+      if (nextPosition >= platform.maximum) {
+        nextPosition = platform.maximum;
+        platform.direction = -1;
+      } else if (nextPosition <= platform.minimum) {
+        nextPosition = platform.minimum;
+        platform.direction = 1;
       }
+      platform.position = nextPosition;
+      if (platform.axis === 'horizontal') {
+        platform.rectangle.x = nextPosition;
+        body.updateFromGameObject();
+        body.setVelocityX(platform.direction * platform.speed);
+      } else {
+        platform.rectangle.y = nextPosition;
+        body.updateFromGameObject();
+        body.setVelocityY(platform.direction * platform.speed);
+      }
+      platform.indicator.setPosition(
+        platform.rectangle.x,
+        platform.rectangle.y - 1,
+      );
+    }
+  }
+
+  private updateFactoryGears(delta: number): void {
+    if (!IS_ZERO_FACTORY) return;
+    const rotation = Math.min(Math.max(delta, 0), 50) * 0.0032;
+    for (const gear of this.factoryGears) {
+      if (gear.active) gear.rotation += rotation;
     }
   }
 
   private updateEnemies(): void {
     for (const runtime of this.enemies) {
-      if (!runtime.enemy.active) continue;
+      if (!runtime.enemy.active) {
+        runtime.visual.destroy();
+        continue;
+      }
       const body = runtime.enemy.body as Phaser.Physics.Arcade.Body;
+      if (
+        IS_ZERO_FACTORY &&
+        runtime.visual instanceof Phaser.GameObjects.Sprite
+      ) {
+        const isAlert =
+          Math.abs(this.player.x - runtime.enemy.x) <= 340 &&
+          Math.abs(this.player.y - runtime.enemy.y) <= 190;
+        runtime.visual.play(
+          isAlert
+            ? ZERO_FACTORY_ANIMATION_ASSETS.enemyAlert.animationKey
+            : ZERO_FACTORY_ANIMATION_ASSETS.enemyPatrol.animationKey,
+          true,
+        );
+        runtime.visual.setDisplaySize(
+          runtime.enemy.width * 1.62,
+          runtime.enemy.height * 1.8,
+        );
+      }
+      const bobDistance = runtime.isFlying ? 4 : 1.5;
+      runtime.visual.setPosition(
+        runtime.enemy.x + (runtime.isPursuer ? -280 : 0),
+        runtime.enemy.y +
+          Math.sin((this.time.now + runtime.minimum) / 110) * bobDistance,
+      );
+      runtime.label?.setPosition(runtime.enemy.x + 76, 74);
+      if (Math.abs(body.velocity.x) > 1) {
+        runtime.visual.setFlipX(body.velocity.x > 0);
+      }
+      if (runtime.isPursuer) {
+        if (this.time.now < this.pursuitStartAt) {
+          body.setVelocityX(0);
+        } else {
+          const gap = this.player.x - runtime.enemy.x;
+          const chaseSpeed = Phaser.Math.Clamp(
+            165 + Math.max(0, gap - 160) * 0.18,
+            165,
+            runtime.speed,
+          );
+          body.setVelocityX(chaseSpeed);
+        }
+        runtime.visual.setFlipX(false);
+        continue;
+      }
       const position =
         runtime.axis === 'horizontal' ? runtime.enemy.x : runtime.enemy.y;
       if (position <= runtime.minimum) {
@@ -846,6 +1559,33 @@ export class VisualLevelScene extends Phaser.Scene {
     group: Phaser.Physics.Arcade.StaticGroup,
     object: LevelObject,
   ): void {
+    if (IS_ZERO_FACTORY) {
+      const gear = this.add
+        .star(
+          object.x + object.width / 2,
+          object.y + object.height / 2,
+          12,
+          Math.min(object.width, object.height) * 0.27,
+          Math.min(object.width, object.height) * 0.5,
+          ZERO_FACTORY_COLORS.hazardRed,
+        )
+        .setStrokeStyle(3, ZERO_FACTORY_COLORS.warningLight)
+        .setDepth(6);
+      gear.setData('levelObjectId', object.id);
+      this.physics.add.existing(gear, true);
+      group.add(gear);
+      this.factoryGears.push(gear);
+      this.add
+        .circle(
+          object.x + object.width / 2,
+          object.y + object.height / 2,
+          Math.min(object.width, object.height) * 0.13,
+          ZERO_FACTORY_COLORS.steelDeep,
+        )
+        .setStrokeStyle(2, ZERO_FACTORY_COLORS.energyCyan)
+        .setDepth(7);
+      return;
+    }
     const spike = this.add.triangle(
       object.x + object.width / 2,
       object.y + object.height / 2,
@@ -855,9 +1595,9 @@ export class VisualLevelScene extends Phaser.Scene {
       0,
       object.width,
       object.height,
-      0xd66559,
+      FIRE_MOUNTAIN_COLORS.lava,
     );
-    spike.setStrokeStyle(2, 0xff9a88);
+    spike.setStrokeStyle(2, FIRE_MOUNTAIN_COLORS.mineralLight);
     spike.setData('levelObjectId', object.id);
     this.physics.add.existing(spike, true);
     group.add(spike);
@@ -869,15 +1609,70 @@ export class VisualLevelScene extends Phaser.Scene {
     level: LevelDocument,
   ): void {
     const isSlime = object.type === 'slime';
+    const isPursuer = !IS_CUSTOM_GAME && object.id === 'l3-pursuer';
+    const enemyX = object.x + object.width / 2;
+    const enemyY = isPursuer ? level.height / 2 : object.y + object.height / 2;
     const enemy = this.add.ellipse(
-      object.x + object.width / 2,
-      object.y + object.height / 2,
-      object.width * (isSlime ? 0.88 : 0.72),
-      object.height * (isSlime ? 0.72 : 0.58),
+      enemyX,
+      enemyY,
+      isPursuer ? object.width : object.width * (isSlime ? 0.88 : 0.72),
+      isPursuer ? level.height + 128 : object.height * (isSlime ? 0.72 : 0.58),
       isSlime ? 0x76c442 : 0xf4c542,
     );
-    enemy.setStrokeStyle(3, isSlime ? 0x315f42 : 0x6d4b16);
+    enemy.setAlpha(0);
     enemy.setData('levelObjectId', object.id);
+    enemy.setData('isPursuer', isPursuer);
+    const visual = IS_CUSTOM_GAME
+      ? this.add
+          .image(
+            enemy.x,
+            enemy.y,
+            isSlime ? CUSTOM_KEYS.slime : CUSTOM_KEYS.bee,
+          )
+          .setDisplaySize(object.width, object.height)
+          .setDepth(7)
+      : IS_ZERO_FACTORY
+        ? this.add
+            .sprite(
+              enemy.x,
+              enemy.y,
+              ZERO_FACTORY_ANIMATION_ASSETS.enemyPatrol.textureKey,
+            )
+            .setDisplaySize(object.width * 1.42, object.height * 1.52)
+            .setDepth(7)
+            .play(ZERO_FACTORY_ANIMATION_ASSETS.enemyPatrol.animationKey)
+        : this.add
+            .sprite(
+              enemy.x + (isPursuer ? -280 : 0),
+              enemy.y,
+              isSlime
+                ? FIRE_MOUNTAIN_ANIMATION_ASSETS.slime.textureKey
+                : FIRE_MOUNTAIN_ANIMATION_ASSETS.bee.textureKey,
+            )
+            .setDisplaySize(
+              isPursuer ? 900 : object.width * (isSlime ? 1.34 : 1.46),
+              isPursuer ? 900 : object.height * (isSlime ? 1.42 : 1.58),
+            )
+            .setDepth(7)
+            .play(
+              isSlime
+                ? FIRE_MOUNTAIN_ANIMATION_ASSETS.slime.animationKey
+                : FIRE_MOUNTAIN_ANIMATION_ASSETS.bee.animationKey,
+            );
+    const label = isPursuer
+      ? this.add
+          .text(enemy.x + 76, 74, 'BOSS · 岩浆巨兽', {
+            color: '#fff4d6',
+            backgroundColor: '#8f2318',
+            fontFamily: 'monospace',
+            fontSize: '16px',
+            fontStyle: 'bold',
+            padding: { x: 10, y: 5 },
+          })
+          .setOrigin(0.5)
+          .setDepth(9)
+      : undefined;
+    enemy.setData('visual', visual);
     this.physics.add.existing(enemy);
     const body = enemy.body as Phaser.Physics.Arcade.Body;
     body.setAllowGravity(false).setImmovable(true);
@@ -903,12 +1698,17 @@ export class VisualLevelScene extends Phaser.Scene {
       minimum,
       boundary - halfSize,
     );
-    if (movement.axis === 'horizontal')
+    if (isPursuer) body.setVelocityX(0);
+    else if (movement.axis === 'horizontal')
       body.setVelocityX(minimum === maximum ? 0 : movement.speed);
     else body.setVelocityY(minimum === maximum ? 0 : movement.speed);
     this.enemies.push({
       objectId: object.id,
       enemy,
+      visual,
+      isFlying: !isSlime,
+      isPursuer,
+      label,
       axis: movement.axis,
       minimum,
       maximum,
@@ -920,17 +1720,382 @@ export class VisualLevelScene extends Phaser.Scene {
     group: Phaser.Physics.Arcade.StaticGroup,
     object: LevelObject,
   ): void {
-    const coin = this.add.circle(
+    const radius = Math.min(object.width, object.height) / 2;
+    const coin = this.add.polygon(
       object.x + object.width / 2,
       object.y + object.height / 2,
-      Math.min(object.width, object.height) / 2,
-      0xe6a53b,
+      [
+        0,
+        -radius,
+        radius * 0.78,
+        -radius * 0.28,
+        radius * 0.62,
+        radius * 0.72,
+        0,
+        radius,
+        -radius * 0.62,
+        radius * 0.72,
+        -radius * 0.78,
+        -radius * 0.28,
+      ],
+      IS_ZERO_FACTORY
+        ? ZERO_FACTORY_COLORS.energyCyan
+        : FIRE_MOUNTAIN_COLORS.lavaLight,
     );
-    coin.setStrokeStyle(3, 0xffe08b);
+    coin.setStrokeStyle(
+      3,
+      IS_ZERO_FACTORY
+        ? ZERO_FACTORY_COLORS.warningLight
+        : FIRE_MOUNTAIN_COLORS.mineralLight,
+    );
     coin.setData('levelObjectId', object.id);
     this.physics.add.existing(coin, true);
     group.add(coin);
     this.remainingCoins += 1;
+  }
+
+  private addKeycard(
+    group: Phaser.Physics.Arcade.StaticGroup,
+    object: LevelObject,
+  ): void {
+    const card = this.add
+      .rectangle(
+        object.x + object.width / 2,
+        object.y + object.height / 2,
+        object.width,
+        object.height,
+        0x2d9de0,
+      )
+      .setStrokeStyle(4, ZERO_FACTORY_COLORS.energyCyan)
+      .setDepth(8);
+    const chip = this.add
+      .circle(
+        object.x + object.width * 0.76,
+        object.y + object.height / 2,
+        Math.max(3, object.height * 0.16),
+        0xe9fbff,
+      )
+      .setStrokeStyle(2, ZERO_FACTORY_COLORS.energyDeep)
+      .setDepth(9);
+    const label = this.add
+      .text(object.x + object.width / 2, object.y - 9, '蓝色门卡', {
+        color: '#b9f1ff',
+        fontFamily: 'monospace',
+        fontSize: '14px',
+        stroke: '#081016',
+        strokeThickness: 3,
+      })
+      .setOrigin(0.5, 1)
+      .setDepth(9);
+    card.setData('levelObjectId', object.id);
+    card.setData('visualParts', [chip, label]);
+    this.physics.add.existing(card, true);
+    group.add(card);
+    this.tweens.add({
+      targets: [card, chip],
+      alpha: { from: 0.72, to: 1 },
+      duration: 520,
+      yoyo: true,
+      repeat: -1,
+    });
+  }
+
+  private collectKeycard(keycard: Phaser.GameObjects.Rectangle): void {
+    this.hasKeycard = true;
+    this.playLocalSfx('coin');
+    this.emitPlaytestEvent({
+      type: 'keycard-collected',
+      objectId: String(keycard.getData('levelObjectId')),
+      ...this.playerPosition(),
+    });
+    const visualParts =
+      (keycard.getData('visualParts') as Phaser.GameObjects.GameObject[]) ?? [];
+    for (const part of visualParts) part.destroy();
+    keycard.destroy();
+    this.keycardLabel?.setText('门卡：已获得 ✓').setColor('#8ff0aa');
+    this.showFactoryNotice('已获得蓝色门卡，安全门正在打开', '#17677c');
+    this.unlockSecurityDoors();
+  }
+
+  private addSecurityDoor(
+    group: Phaser.Physics.Arcade.StaticGroup,
+    object: LevelObject,
+  ): void {
+    const door = this.add
+      .rectangle(
+        object.x + object.width / 2,
+        object.y + object.height / 2,
+        object.width,
+        object.height,
+        ZERO_FACTORY_COLORS.steel,
+      )
+      .setStrokeStyle(5, ZERO_FACTORY_COLORS.energyCyan)
+      .setDepth(10);
+    const seam = this.add
+      .rectangle(
+        object.x + object.width / 2,
+        object.y + object.height / 2,
+        Math.max(6, object.width * 0.12),
+        Math.max(16, object.height - 20),
+        ZERO_FACTORY_COLORS.warningYellow,
+      )
+      .setDepth(11);
+    const light = this.add
+      .circle(
+        object.x + object.width / 2,
+        object.y + 28,
+        Math.max(5, object.width * 0.12),
+        ZERO_FACTORY_COLORS.hazardRed,
+      )
+      .setStrokeStyle(2, ZERO_FACTORY_COLORS.warningLight)
+      .setDepth(12);
+    const label = this.add
+      .text(object.x + object.width / 2, object.y - 10, '门禁锁定', {
+        color: '#ffcbc4',
+        backgroundColor: '#622d32',
+        fontFamily: 'monospace',
+        fontSize: '14px',
+        padding: { x: 8, y: 4 },
+      })
+      .setOrigin(0.5, 1)
+      .setDepth(12);
+    door.setData('levelObjectId', object.id);
+    this.physics.add.existing(door, true);
+    group.add(door);
+    this.securityDoors.push({ objectId: object.id, door, seam, light, label });
+  }
+
+  private unlockSecurityDoors(): void {
+    for (const runtime of this.securityDoors) {
+      const body = runtime.door.body as Phaser.Physics.Arcade.StaticBody;
+      body.enable = false;
+      runtime.light.setFillStyle(0x4bbf73);
+      runtime.label.setText('门禁解除').setColor('#d8ffe2');
+      this.emitPlaytestEvent({
+        type: 'security-door-unlocked',
+        objectId: runtime.objectId,
+        ...this.playerPosition(),
+      });
+      this.tweens.add({
+        targets: [runtime.door, runtime.seam, runtime.light, runtime.label],
+        y: `-=${runtime.door.height * 0.72}`,
+        alpha: 0,
+        duration: 620,
+        ease: 'Sine.easeInOut',
+        onComplete: () => {
+          runtime.door.destroy();
+          runtime.seam.destroy();
+          runtime.light.destroy();
+          runtime.label.destroy();
+        },
+      });
+    }
+  }
+
+  private showDoorLockedMessage(): void {
+    if (this.time.now < this.doorNoticeAvailableAt) return;
+    this.doorNoticeAvailableAt = this.time.now + 900;
+    this.showFactoryNotice('安全门已锁定：需要先找到蓝色门卡', '#8f3038');
+  }
+
+  private addFloorSwitch(
+    group: Phaser.Physics.Arcade.StaticGroup,
+    object: LevelObject,
+  ): void {
+    const sensor = this.add
+      .rectangle(
+        object.x + object.width / 2,
+        object.y + object.height / 2,
+        object.width,
+        object.height,
+        ZERO_FACTORY_COLORS.warningYellow,
+        0,
+      )
+      .setDepth(5);
+    const plateHeight = Math.min(18, object.height);
+    const plate = this.add
+      .rectangle(
+        object.x + object.width / 2,
+        object.y + object.height - plateHeight / 2,
+        object.width,
+        plateHeight,
+        ZERO_FACTORY_COLORS.warningYellow,
+      )
+      .setStrokeStyle(3, ZERO_FACTORY_COLORS.warningLight)
+      .setDepth(7);
+    const light = this.add
+      .circle(
+        object.x + object.width / 2,
+        object.y + object.height - plateHeight / 2,
+        Math.max(4, plateHeight * 0.28),
+        ZERO_FACTORY_COLORS.hazardRed,
+      )
+      .setStrokeStyle(2, ZERO_FACTORY_COLORS.steelDeep)
+      .setDepth(8);
+    const label = this.add
+      .text(object.x + object.width / 2, object.y - 8, '控制开关', {
+        color: '#ffe69a',
+        fontFamily: 'monospace',
+        fontSize: '14px',
+        stroke: '#081016',
+        strokeThickness: 3,
+      })
+      .setOrigin(0.5, 1)
+      .setDepth(8);
+    sensor.setData('levelObjectId', object.id);
+    this.physics.add.existing(sensor, true);
+    group.add(sensor);
+    this.floorSwitches.push({
+      objectId: object.id,
+      sensor,
+      plate,
+      light,
+      label,
+      activated: false,
+    });
+  }
+
+  private activateFloorSwitch(sensor: Phaser.GameObjects.Rectangle): void {
+    const runtime = this.floorSwitches.find(
+      (item) => item.sensor === sensor && !item.activated,
+    );
+    if (!runtime) return;
+    runtime.activated = true;
+    this.activatedFloorSwitches += 1;
+    const body = runtime.sensor.body as Phaser.Physics.Arcade.StaticBody;
+    body.enable = false;
+    runtime.plate.setFillStyle(0x2b8755).setY(runtime.plate.y + 6);
+    runtime.light.setFillStyle(0x8ff0aa).setY(runtime.light.y + 6);
+    runtime.label.setText('开关已启动').setColor('#8ff0aa');
+    this.playLocalSfx('checkpoint');
+    this.emitPlaytestEvent({
+      type: 'floor-switch-activated',
+      objectId: runtime.objectId,
+      ...this.playerPosition(),
+    });
+    this.switchLabel
+      ?.setText(
+        `机关：${this.activatedFloorSwitches} / ${this.floorSwitches.length}`,
+      )
+      .setColor('#8ff0aa');
+    if (this.activatedFloorSwitches < this.floorSwitches.length) {
+      this.showFactoryNotice(
+        `控制开关已启动，还差 ${this.floorSwitches.length - this.activatedFloorSwitches} 个`,
+        '#6c5620',
+      );
+      return;
+    }
+    this.showFactoryNotice('全部开关已启动，激光门已关闭', '#1f7a45');
+    this.disableLaserGates();
+  }
+
+  private addLaserGate(
+    group: Phaser.Physics.Arcade.StaticGroup,
+    object: LevelObject,
+  ): void {
+    const centerX = object.x + object.width / 2;
+    const centerY = object.y + object.height / 2;
+    const sensor = this.add
+      .rectangle(centerX, centerY, object.width, object.height, 0xff324f, 0.05)
+      .setDepth(9);
+    const frame = this.add
+      .rectangle(centerX, centerY, object.width, object.height, 0x0b1724, 0.2)
+      .setStrokeStyle(5, ZERO_FACTORY_COLORS.hazardRed)
+      .setDepth(9);
+    const beamCount = Math.max(2, Math.min(4, Math.floor(object.width / 16)));
+    const beams: Phaser.GameObjects.Rectangle[] = [];
+    for (let index = 0; index < beamCount; index += 1) {
+      beams.push(
+        this.add
+          .rectangle(
+            object.x + ((index + 1) * object.width) / (beamCount + 1),
+            centerY,
+            6,
+            object.height - 12,
+            0xff3655,
+            0.9,
+          )
+          .setStrokeStyle(2, 0xffadb8)
+          .setDepth(10),
+      );
+    }
+    const light = this.add
+      .circle(centerX, object.y + 22, 8, ZERO_FACTORY_COLORS.hazardRed)
+      .setStrokeStyle(2, ZERO_FACTORY_COLORS.warningLight)
+      .setDepth(11);
+    const label = this.add
+      .text(centerX, object.y - 10, '高压激光', {
+        color: '#ffd7dc',
+        backgroundColor: '#792936',
+        fontFamily: 'monospace',
+        fontSize: '14px',
+        padding: { x: 8, y: 4 },
+      })
+      .setOrigin(0.5, 1)
+      .setDepth(11);
+    sensor.setData('levelObjectId', object.id);
+    this.physics.add.existing(sensor, true);
+    group.add(sensor);
+    this.tweens.add({
+      targets: beams,
+      alpha: { from: 0.45, to: 1 },
+      duration: 260,
+      yoyo: true,
+      repeat: -1,
+    });
+    this.laserGates.push({
+      objectId: object.id,
+      sensor,
+      frame,
+      beams,
+      light,
+      label,
+    });
+  }
+
+  private disableLaserGates(): void {
+    for (const runtime of this.laserGates) {
+      const body = runtime.sensor.body as Phaser.Physics.Arcade.StaticBody;
+      body.enable = false;
+      runtime.light.setFillStyle(0x4bbf73);
+      runtime.frame.setStrokeStyle(5, 0x4bbf73);
+      runtime.label
+        .setText('激光已关闭')
+        .setColor('#d8ffe2')
+        .setBackgroundColor('#1f7a45');
+      this.emitPlaytestEvent({
+        type: 'laser-gate-disabled',
+        objectId: runtime.objectId,
+        ...this.playerPosition(),
+      });
+      this.tweens.killTweensOf(runtime.beams);
+      this.tweens.add({
+        targets: runtime.beams,
+        alpha: 0,
+        duration: 480,
+        ease: 'Sine.easeOut',
+      });
+    }
+  }
+
+  private showFactoryNotice(message: string, backgroundColor: string): void {
+    this.doorNotice?.destroy();
+    const notice = this.add
+      .text(this.cameras.main.centerX, 112, message, {
+        color: '#ffffff',
+        backgroundColor,
+        fontFamily: 'monospace',
+        fontSize: '17px',
+        padding: { x: 14, y: 8 },
+      })
+      .setOrigin(0.5, 0)
+      .setScrollFactor(0)
+      .setDepth(190);
+    this.doorNotice = notice;
+    this.time.delayedCall(1_500, () => {
+      if (this.doorNotice === notice) this.doorNotice = undefined;
+      notice.destroy();
+    });
   }
 
   private addCheckpoint(
@@ -943,13 +2108,27 @@ export class VisualLevelScene extends Phaser.Scene {
       object.y + object.height / 2,
       object.width,
       object.height,
-      active ? 0x4bbf73 : 0xd49b3d,
-      active ? 0.32 : 0.16,
+      active
+        ? FIRE_MOUNTAIN_COLORS.iceBlueDeep
+        : FIRE_MOUNTAIN_COLORS.basaltDeep,
+      active ? 0.46 : 0.7,
     );
-    checkpoint.setStrokeStyle(2, active ? 0x8ff0aa : 0xffe08b);
+    checkpoint.setStrokeStyle(
+      3,
+      active ? FIRE_MOUNTAIN_COLORS.iceBlue : FIRE_MOUNTAIN_COLORS.mineralGold,
+    );
     checkpoint.setData('levelObjectId', object.id);
     this.physics.add.existing(checkpoint, true);
     group.add(checkpoint);
+    this.add
+      .circle(
+        object.x + object.width / 2,
+        object.y + Math.min(12, object.height * 0.22),
+        Math.min(9, object.width * 0.22),
+        active ? FIRE_MOUNTAIN_COLORS.iceBlue : FIRE_MOUNTAIN_COLORS.lavaLight,
+        0.92,
+      )
+      .setStrokeStyle(2, FIRE_MOUNTAIN_COLORS.mineralLight);
     this.add
       .text(
         object.x + object.width / 2,
@@ -968,6 +2147,7 @@ export class VisualLevelScene extends Phaser.Scene {
     const objectId = String(checkpoint.getData('levelObjectId'));
     if (this.activeCheckpointId === objectId) return;
     this.activeCheckpointId = objectId;
+    this.playLocalSfx('checkpoint');
     this.registry.set(this.checkpointRegistryKey, objectId);
     checkpoint.setFillStyle(0x4bbf73, 0.32);
     checkpoint.setStrokeStyle(2, 0x8ff0aa);
@@ -994,24 +2174,44 @@ export class VisualLevelScene extends Phaser.Scene {
       object.y + object.height / 2,
       object.width,
       object.height,
-      0x4bbf73,
-      0.35,
+      FIRE_MOUNTAIN_COLORS.iceBlueDeep,
+      0.22,
     );
-    goal.setStrokeStyle(3, 0x8ff0aa);
+    goal.setStrokeStyle(4, FIRE_MOUNTAIN_COLORS.iceBlue);
     this.physics.add.existing(goal, true);
     group.add(goal);
     this.add
-      .text(object.x + object.width / 2, object.y - 10, '终点', {
-        color: '#d8ffe2',
-        fontFamily: 'monospace',
-        fontSize: '18px',
-      })
+      .ellipse(
+        object.x + object.width / 2,
+        object.y + object.height / 2,
+        Math.max(10, object.width - 10),
+        Math.max(18, object.height - 8),
+        FIRE_MOUNTAIN_COLORS.iceBlue,
+        0.12,
+      )
+      .setStrokeStyle(2, FIRE_MOUNTAIN_COLORS.iceBlue, 0.86);
+    this.add
+      .text(
+        object.x + object.width / 2,
+        object.y - 10,
+        IS_ZERO_FACTORY
+          ? this.campaign.levels[this.levelIndex]?.id === 'level-3'
+            ? '中央控制台'
+            : '升降出口'
+          : '终点',
+        {
+          color: '#d8ffe2',
+          fontFamily: 'monospace',
+          fontSize: '18px',
+        },
+      )
       .setOrigin(0.5, 1);
   }
 
   private completeLevel(): void {
     if (this.completed) return;
     this.completed = true;
+    this.playLocalSfx('levelClear');
     this.pauseButton?.setVisible(false);
     this.registry.remove(this.checkpointRegistryKey);
     this.registry.remove(this.livesRegistryKey);
@@ -1228,18 +2428,28 @@ export class VisualLevelScene extends Phaser.Scene {
           .setDepth(501),
       );
       this.addMainMenuButton(
-        height / 2 - 70,
+        height / 2 - 138,
         `关卡背景网格：${this.preferences.showGrid ? '显示' : '隐藏'}`,
         () => this.togglePreference('showGrid'),
       );
       this.addMainMenuButton(
-        height / 2 + 18,
+        height / 2 - 70,
         `游戏内操作提示：${this.preferences.showControlHints ? '显示' : '隐藏'}`,
         () => this.togglePreference('showControlHints'),
       );
+      this.addMainMenuButton(
+        height / 2 - 2,
+        `游戏音效：${this.preferences.soundEnabled ? '开启' : '关闭'}`,
+        () => this.togglePreference('soundEnabled'),
+      );
+      this.addMainMenuButton(
+        height / 2 + 66,
+        `音效音量：${Math.round(this.preferences.soundVolume * 100)}%`,
+        () => this.cycleSoundVolume(),
+      );
       this.keepMainMenuObject(
         this.add
-          .text(width / 2, height / 2 + 92, '设置会自动保存，进入关卡后生效', {
+          .text(width / 2, height / 2 + 132, '设置会自动保存，进入关卡后生效', {
             color: '#82929a',
             fontFamily: 'monospace',
             fontSize: '15px',
@@ -1373,8 +2583,19 @@ export class VisualLevelScene extends Phaser.Scene {
     this.showLevelSelection(0);
   }
 
-  private togglePreference(key: keyof GamePreferences): void {
+  private togglePreference(
+    key: 'showGrid' | 'showControlHints' | 'soundEnabled',
+  ): void {
     this.preferences = { ...this.preferences, [key]: !this.preferences[key] };
+    saveGamePreferences(this.progressStorage, this.preferences);
+    this.showMainMenu('settings');
+  }
+
+  private cycleSoundVolume(): void {
+    this.preferences = {
+      ...this.preferences,
+      soundVolume: getNextSoundVolume(this.preferences.soundVolume),
+    };
     saveGamePreferences(this.progressStorage, this.preferences);
     this.showMainMenu('settings');
   }
@@ -1721,6 +2942,34 @@ export class VisualLevelScene extends Phaser.Scene {
     return { x: Math.round(this.player.x), y: Math.round(this.player.y) };
   }
 
+  private playLocalSfx(name: LocalSfxName): void {
+    const sound = LOCAL_SFX[name];
+    if (!this.preferences.soundEnabled) return;
+    if (this.sound.locked) return;
+    if (!this.cache.audio.exists(sound.assetKey)) return;
+    const now = this.time.now;
+    if (
+      !mayPlayLocalSfx(
+        this.lastSfxPlayedAt.get(name),
+        now,
+        sound.minimumIntervalMs,
+      )
+    ) {
+      return;
+    }
+    try {
+      if (
+        this.sound.play(sound.assetKey, {
+          volume: sound.volume * this.preferences.soundVolume,
+        })
+      ) {
+        this.lastSfxPlayedAt.set(name, now);
+      }
+    } catch {
+      // Audio must never interrupt gameplay when a browser blocks playback.
+    }
+  }
+
   private emitPlaytestEvent(event: PlaytestEvent): void {
     if (window.parent === window) return;
     window.parent.postMessage(
@@ -1914,7 +3163,7 @@ function readLevelCampaign(
     levels: [
       {
         id: 'level-1',
-        name: '第 1 关',
+        name: IS_CUSTOM_GAME ? '待 AI 创建' : '第 1 关 · 岩浆边缘',
         document: readLevelDocument(legacyLevel),
         abilities: { ...DEFAULT_PLAYER_ABILITIES },
       },

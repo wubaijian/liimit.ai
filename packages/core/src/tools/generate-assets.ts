@@ -69,7 +69,8 @@ class GenerateAssetsInvocation extends BaseToolInvocation<
    * a missing API key surfaces as an actionable execute-time error
    * instead of crashing tool registration / invocation construction.
    */
-  private modelRouter!: ModelRouter;
+  private visualModelRouter: ModelRouter | undefined;
+  private audioModelRouter: ModelRouter | undefined;
   private bgRemovalService: BackgroundRemovalService;
   private frameExtractionService: FrameExtractionService;
   private tilesetProcessor: TilesetProcessor;
@@ -106,14 +107,29 @@ class GenerateAssetsInvocation extends BaseToolInvocation<
    * `execute()` and surfaced as a tool-result error rather than
    * propagated as an uncaught exception.
    */
-  private ensureModelRouter(): ModelRouter {
-    if (!this.modelRouter) {
-      this.modelRouter = createModelRouter({
+  private ensureVisualModelRouter(): ModelRouter {
+    if (!this.visualModelRouter) {
+      this.visualModelRouter = createModelRouter({
         modelType: this.params.model_type,
         providers: this.config.getOpenGameProviders(),
       });
     }
-    return this.modelRouter;
+    return this.visualModelRouter;
+  }
+
+  /**
+   * Audio requests use their own router so they never inherit image
+   * configuration requirements (or a failed visual-router initialization).
+   */
+  private ensureAudioModelRouter(): ModelRouter {
+    if (!this.audioModelRouter) {
+      this.audioModelRouter = createModelRouter({
+        requiredModality: 'audio',
+        modelType: this.params.model_type,
+        providers: this.config.getOpenGameProviders(),
+      });
+    }
+    return this.audioModelRouter;
   }
 
   async execute(signal: AbortSignal): Promise<ToolResult> {
@@ -159,7 +175,9 @@ class GenerateAssetsInvocation extends BaseToolInvocation<
             return;
           }
 
-          if (assetReq.type !== 'animation') this.ensureModelRouter();
+          if (assetReq.type !== 'animation' && assetReq.type !== 'audio') {
+            this.ensureVisualModelRouter();
+          }
 
           switch (assetReq.type) {
             case 'background':
@@ -317,7 +335,7 @@ CODING INSTRUCTION (Phaser 3):
       PURE SCENERY ONLY - landscape, buildings, environment, sky, etc.
     `;
 
-    const imageUrl = await this.modelRouter.generateImage(
+    const imageUrl = await this.visualModelRouter!.generateImage(
       prompt,
       req.resolution || '1024*1024',
     );
@@ -344,7 +362,7 @@ CODING INSTRUCTION (Phaser 3):
       IMPORTANT: Pure white background, no text, no position offset, ONE object only.
     `;
 
-    const imageUrl = await this.modelRouter.generateImage(
+    const imageUrl = await this.visualModelRouter!.generateImage(
       prompt,
       req.size || '1024*1024',
     );
@@ -411,7 +429,7 @@ CODING INSTRUCTION (Phaser 3):
     console.log(
       `[GenerateAssets] Generating animation: ${req.key} (${missingFrameKeys.size} missing frames)`,
     );
-    const modelRouter = this.ensureModelRouter();
+    const modelRouter = this.ensureVisualModelRouter();
 
     // Step 1: Generate base image
     const basePrompt = `
@@ -546,7 +564,7 @@ CODING INSTRUCTION (Phaser 3):
         `;
 
         console.log(`[GenerateAssets] Step 1: Generating video via I2V...`);
-        const { videoUrl } = await this.modelRouter.generateVideo(
+        const { videoUrl } = await this.visualModelRouter!.generateVideo(
           baseImageUrl,
           videoPrompt,
           '480P',
@@ -800,7 +818,7 @@ CODING INSTRUCTION (Phaser 3):
             await this.sleep(RETRY_DELAY * retry); // Exponential backoff
           }
 
-          frameUrl = await this.modelRouter.editImage(
+          frameUrl = await this.visualModelRouter!.editImage(
             baseImageUrl,
             framePrompt,
             previousFrameUrl,
@@ -866,6 +884,8 @@ CODING INSTRUCTION (Phaser 3):
   ): Promise<void> {
     if (signal.aborted) throw new Error('Aborted');
 
+    const modelRouter = this.ensureAudioModelRouter();
+
     console.log(
       `[GenerateAssets] Generating audio: ${req.key} (${req.audioType})`,
     );
@@ -883,7 +903,7 @@ CODING INSTRUCTION (Phaser 3):
     // Strategy 0: dedicated text-to-audio provider. This is the preferred
     // production path for ElevenLabs, MiniMax, Stable Audio, Lyria and Mureka.
     try {
-      const generated = await this.modelRouter.generateDirectAudio(req);
+      const generated = await modelRouter.generateDirectAudio(req);
       if (generated) {
         buffer = generated.buffer;
         extension = generated.extension;
@@ -893,7 +913,7 @@ CODING INSTRUCTION (Phaser 3):
       }
     } catch (error) {
       console.warn(`[GenerateAssets] Direct audio generation failed: ${error}`);
-      const provider = this.modelRouter.audioConfig?.provider;
+      const provider = modelRouter.audioConfig?.provider;
       const professionalProvider =
         provider === 'elevenlabs' ||
         provider === 'minimax' ||
@@ -920,7 +940,7 @@ CODING INSTRUCTION (Phaser 3):
           Music visualization, abstract, ${req.genre || 'ambient'}, ${req.tempo || 'medium'} tempo.
           High quality audio, clear sound.
         `;
-        const { videoUrl } = await this.modelRouter.generateVideoFromText(
+        const { videoUrl } = await modelRouter.generateVideoFromText(
           videoPrompt,
           '720P',
         );
@@ -955,7 +975,7 @@ CODING INSTRUCTION (Phaser 3):
       console.log(`[GenerateAssets] Trying ABC notation via LLM...`);
       let abcNotation: string | null = null;
       try {
-        abcNotation = await this.modelRouter.generateABC(req);
+        abcNotation = await modelRouter.generateABC(req);
         console.log(
           `[GenerateAssets] ABC notation generated (${abcNotation.length} chars)`,
         );
@@ -965,7 +985,7 @@ CODING INSTRUCTION (Phaser 3):
 
       if (abcNotation) {
         try {
-          buffer = await this.modelRouter.generateAudioFromABC(
+          buffer = await modelRouter.generateAudioFromABC(
             abcNotation,
             audioType,
             duration,
@@ -983,7 +1003,7 @@ CODING INSTRUCTION (Phaser 3):
         `[GenerateAssets] Using procedural audio generation (duration=${duration}s, type=${audioType})...`,
       );
       try {
-        buffer = await this.modelRouter.generatePlaceholderAudio(
+        buffer = await modelRouter.generatePlaceholderAudio(
           duration,
           audioType,
         );
@@ -1065,7 +1085,10 @@ isometric, 3D, perspective, vignette, dark corners.
 
     // 2. Generate raw image (1024x1024)
     console.log(`[GenerateAssets] Step 1: Generating 3x3 source atlas...`);
-    const imageUrl = await this.modelRouter.generateImage(prompt, '1024*1024');
+    const imageUrl = await this.visualModelRouter!.generateImage(
+      prompt,
+      '1024*1024',
+    );
     const rawBuffer = await this.downloadImage(imageUrl);
 
     // 3. Call Processor for intelligent expansion

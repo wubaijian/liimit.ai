@@ -9,8 +9,18 @@ import {
   type IpcMainInvokeEvent,
 } from 'electron';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { AgentRunner } from './agentRunner.js';
+import { AgentRunner, buildCredentialPayload } from './agentRunner.js';
+import { ApiCostStore } from './apiCostStore.js';
+import {
+  ApiCostGateway,
+  costProfiles,
+  type CostEndpoints,
+} from './apiCostGateway.js';
+import type { CostSlot } from '../shared/apiCost.js';
+import { ProjectRemovalService } from './projectRemovalService.js';
+import { ProposalDecisionService } from './proposalDecision.js';
 import { AgentEventStore } from './agentEventStore.js';
 import { ProjectManager, type GameSkillLocations } from './projectManager.js';
 import { StateStore } from './store.js';
@@ -24,20 +34,41 @@ import { inspectDesktopPlatform } from './platformSupport.js';
 import { migrateLegacyUserData } from './brandMigration.js';
 import { LevelDocumentStore } from './levelDocumentStore.js';
 import { StarterPreparationService } from './starterPreparationService.js';
+import {
+  InitialGenerationService,
+  validateCreationMode,
+} from './initialGenerationService.js';
 import { requireReadyStarterProject } from './starterPreparationGate.js';
+import {
+  generateElevenLabsAudioPreviewBatch,
+  validateAudioDescription,
+  validateAudioDurationSeconds,
+} from './audioPreviewService.js';
+import { ProjectAudioOverrideService } from './projectAudioOverrideService.js';
 import type {
+  ApplyAudioPreviewInput,
   AppSettings,
+  AudioPreviewMimeType,
+  AudioPreviewProgress,
   CreateProjectInput,
   DependencyActionInput,
+  GameSoundSlot,
+  GenerateAudioPreviewInput,
   ImportSkillInput,
   InstallGitHubSkillInput,
   ProjectRecord,
   ProviderConnectionInput,
   ProviderEndpoint,
   ProviderSlot,
+  RestoreProjectAudioInput,
   StartAgentInput,
 } from '../shared/types.js';
-import { isFixedProductMode } from '../shared/types.js';
+import {
+  AUDIO_PREVIEW_CANDIDATE_COUNT,
+  GAME_SOUND_SLOTS,
+  isStarterTemplateId,
+  isFixedProductMode,
+} from '../shared/types.js';
 
 const productName = 'liimit.ai';
 const applicationId = 'com.gameagent.desktop';
@@ -60,12 +91,40 @@ let agentEvents: AgentEventStore;
 let extensions: ExtensionManager;
 let githubSkills: GitHubSkillInstaller;
 let apiUsage: ApiUsageStore;
+let apiCosts: ApiCostStore;
+let audioCostMonitor: ApiCostGateway | undefined;
 let dependencyManager: DependencyManager;
 let levelDocuments: LevelDocumentStore;
 let starterPreparation: StarterPreparationService;
+let initialGeneration: InitialGenerationService;
+let projectAudioOverrides: ProjectAudioOverrideService;
 let trustedRendererUrl = '';
 let quitInProgress = false;
 let quitReady = false;
+let audioPreviewInFlight = false;
+let audioPreviewAbortController: AbortController | null = null;
+
+function currentCostEndpoints(): CostEndpoints {
+  const credentials = buildCredentialPayload(store.getRuntimeSettings());
+  return { main: credentials.main, ...credentials.providers };
+}
+async function confirmAdditionalAsset(
+  slot: CostSlot,
+  amount: number | null,
+): Promise<boolean> {
+  if (!mainWindow) return false;
+  const result = await dialog.showMessageBox(mainWindow, {
+    type: 'question',
+    title: '确认再次调用素材 API',
+    message: 'AI 准备再次生成素材，可能产生额外费用。',
+    detail: `类别：${slot === 'image' ? '图片' : slot === 'audio' ? '音效' : '视频'}。本次参考费用：${amount === null ? '未知' : `¥${amount.toFixed(4)}`}。拒绝后暂停任务，已有内容保留。`,
+    buttons: ['暂停，不再生成', '确认继续生成'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  });
+  return result.response === 1;
+}
 
 function installApplicationMenu(): void {
   if (process.platform !== 'darwin') return;
@@ -120,13 +179,25 @@ function assertTrustedIpc(event: IpcMainInvokeEvent): void {
   }
 }
 
+let projectRemoval: ProjectRemovalService;
+let pendingIpcOperations = 0;
+
 function secureHandle<T extends unknown[], R>(
   channel: string,
   handler: (...args: T) => R | Promise<R>,
 ): void {
-  ipcMain.handle(channel, (event, ...args: unknown[]) => {
+  ipcMain.handle(channel, async (event, ...args: unknown[]) => {
     assertTrustedIpc(event);
-    return handler(...(args as T));
+    if (projectRemoval?.busy)
+      throw new Error('正在确认或移除项目，请完成当前操作后再试。');
+    if (channel === 'project:remove' && pendingIpcOperations > 0)
+      throw new Error('仍有读取或保存操作，请稍后再移除项目。');
+    pendingIpcOperations++;
+    try {
+      return await handler(...(args as T));
+    } finally {
+      pendingIpcOperations--;
+    }
   });
 }
 
@@ -248,8 +319,17 @@ function validateCreateProjectInput(value: unknown): CreateProjectInput {
   if (!path.isAbsolute(directory)) throw new Error('保存目录必须是绝对路径。');
   return {
     name: requireString(input.name, '项目名称', 120),
+    creationMode: validateCreationMode(input.creationMode),
     directory,
     prompt: requireString(input.prompt, '游戏创意', 200_000),
+    starterTemplateId:
+      input.starterTemplateId === undefined
+        ? undefined
+        : isStarterTemplateId(input.starterTemplateId)
+          ? input.starterTemplateId
+          : (() => {
+              throw new Error('固定游戏模板无效。');
+            })(),
   };
 }
 
@@ -279,6 +359,14 @@ const PROVIDER_SLOTS = new Set<ProviderSlot>([
   'video',
   'audio',
 ]);
+const GAME_SOUND_LABELS: Record<GameSoundSlot, string> = {
+  jump: '跳跃',
+  coin: '金币',
+  death: '死亡',
+  levelClear: '通关',
+  enemyHit: '踩中敌人',
+  checkpoint: '检查点',
+};
 
 function validateProviderEndpoint(
   value: unknown,
@@ -375,6 +463,68 @@ function validateProviderConnectionInput(
   };
 }
 
+function validateGameSoundSlot(value: unknown): GameSoundSlot {
+  if (
+    typeof value !== 'string' ||
+    !GAME_SOUND_SLOTS.some((sound) => sound === value)
+  ) {
+    throw new Error('音效用途无效。');
+  }
+  return value as GameSoundSlot;
+}
+
+function validateGenerateAudioPreviewInput(
+  value: unknown,
+): GenerateAudioPreviewInput {
+  if (!value || typeof value !== 'object') {
+    throw new Error('音效生成参数无效。');
+  }
+  const input = value as Record<string, unknown>;
+  return {
+    sound: validateGameSoundSlot(input.sound),
+    description: validateAudioDescription(input.description),
+    durationSeconds: validateAudioDurationSeconds(input.durationSeconds),
+  };
+}
+
+function validateApplyAudioPreviewInput(
+  value: unknown,
+): ApplyAudioPreviewInput {
+  if (!value || typeof value !== 'object') {
+    throw new Error('应用音效参数无效。');
+  }
+  const input = value as Record<string, unknown>;
+  if (!(input.bytes instanceof Uint8Array)) {
+    throw new Error('音效文件格式无效。');
+  }
+  return {
+    projectId: requireString(input.projectId, '项目 ID', 160),
+    sound: validateGameSoundSlot(input.sound),
+    mimeType: validateAudioPreviewMimeType(input.mimeType),
+    bytes: new Uint8Array(input.bytes),
+  };
+}
+
+function validateAudioPreviewMimeType(value: unknown): AudioPreviewMimeType {
+  if (value !== 'audio/mpeg' && value !== 'audio/wav') {
+    throw new Error('音效文件类型无效。');
+  }
+  return value;
+}
+
+function validateRestoreProjectAudioInput(
+  value: unknown,
+): RestoreProjectAudioInput {
+  if (!value || typeof value !== 'object') {
+    throw new Error('恢复音效参数无效。');
+  }
+  const input = value as Record<string, unknown>;
+  return {
+    projectId: requireString(input.projectId, '项目 ID', 160),
+    sound: validateGameSoundSlot(input.sound),
+  };
+}
+
 function hydrateTestCredential(
   input: ProviderConnectionInput,
 ): ProviderEndpoint {
@@ -396,6 +546,43 @@ function hydrateTestCredential(
 }
 
 function registerIpc(): void {
+  projectRemoval = new ProjectRemovalService({
+    getProject,
+    getProjects: () => store.getProjects(),
+    isBusy: (id) =>
+      runner.isProjectBusy(id) ||
+      starterPreparation.isProjectBusy(id) ||
+      initialGeneration.isProjectBusy(id),
+    confirm: async (project, mode) => {
+      const trash = mode === 'trash';
+      const result = await dialog.showMessageBox(mainWindow!, {
+        type: 'warning',
+        title: trash ? '删除项目及文件' : '从列表移除',
+        message: `确定${trash ? '删除' : '移除'}“${project.name}”吗？`,
+        detail: `项目位置：${project.path}\n\n${trash ? '整个项目文件夹将移到系统废纸篓，项目也会从列表消失。误删后可从废纸篓恢复文件；恢复文件不会自动恢复列表。' : '只从左侧列表移除，电脑里的游戏文件不会删除。此操作不会自动提供重新导入入口。'}\n\n应用中的历史和费用记录不会清空。`,
+        buttons: ['取消', trash ? '移到废纸篓' : '从列表移除'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      return result.response === 1;
+    },
+    trash: (target) => shell.trashItem(target),
+    removeRecord: (id) => store.removeProject(id),
+    stopPreview: (id) => projects.stopPreview(id),
+    get protectedPaths() {
+      return [
+        app.getPath('userData'),
+        app.getPath('temp'),
+        app.getAppPath(),
+        resolvePaths().repoRoot,
+        store.getPublicSettings().defaultWorkspace,
+      ];
+    },
+  });
+  secureHandle('project:remove', (input: unknown) =>
+    projectRemoval.remove(input),
+  );
   secureHandle('app:bootstrap', () => {
     const runtime = runner.inspectRuntime();
     return {
@@ -418,11 +605,10 @@ function registerIpc(): void {
   });
 
   secureHandle('project:create', async (input: unknown) => {
-    const project = await projects.create(validateCreateProjectInput(input));
+    const project = await initialGeneration.create(
+      validateCreateProjectInput(input),
+    );
     mainWindow?.webContents.send('project:updated', project);
-    void starterPreparation.enqueue(project).catch((error: unknown) => {
-      console.error('[liimit.ai] 基础游戏准备失败：', error);
-    });
     return project;
   });
 
@@ -451,6 +637,15 @@ function registerIpc(): void {
   secureHandle('settings:save', (settings: unknown) =>
     store.saveSettings(validateSettings(settings)),
   );
+  secureHandle('settings:api-costs', (projectId: unknown) => {
+    const id =
+      projectId === null ? null : requireString(projectId, '项目 ID', 160);
+    if (id !== null) getProject(id);
+    return apiCosts.snapshot(id, costProfiles(currentCostEndpoints()));
+  });
+  secureHandle('settings:save-api-costs', (value: unknown) =>
+    apiCosts.save(value, costProfiles(currentCostEndpoints())),
+  );
 
   secureHandle('settings:test-provider', async (input: unknown) => {
     const validated = validateProviderConnectionInput(input);
@@ -471,6 +666,182 @@ function registerIpc(): void {
       console.error('[liimit.ai] Failed to persist provider probe:', error);
     }
     return result;
+  });
+
+  secureHandle('settings:generate-audio-preview', async (value: unknown) => {
+    if (audioPreviewInFlight) {
+      throw new Error('测试音效正在生成，请等待本次完成。');
+    }
+    if (store.getProjects().some((p) => runner.isProjectBusy(p.id)))
+      throw new Error(
+        '请先停止 AI 制作任务，再生成试听音效，以免同时产生费用。',
+      );
+
+    const input = validateGenerateAudioPreviewInput(value);
+    const endpoint = store.getRuntimeSettings().audio;
+    const startedAt = Date.now();
+    let sentCalls = 0;
+    let status: 'success' | 'warning' | 'error' = 'error';
+    const generationId = randomUUID();
+    const controller = new AbortController();
+    let lastProgress: Omit<
+      AudioPreviewProgress,
+      'generationId' | 'status' | 'totalCount'
+    > = { completedCount: 0, successCount: 0, failedCount: 0 };
+    const sendAudioProgress = (
+      progressStatus: AudioPreviewProgress['status'],
+    ) => {
+      const progress: AudioPreviewProgress = {
+        generationId,
+        status: progressStatus,
+        totalCount: AUDIO_PREVIEW_CANDIDATE_COUNT,
+        ...lastProgress,
+      };
+      mainWindow?.webContents.send('settings:audio-preview-progress', progress);
+    };
+    audioPreviewInFlight = true;
+    audioPreviewAbortController = controller;
+    sendAudioProgress('running');
+    try {
+      audioCostMonitor = await ApiCostGateway.create({
+        ledger: apiCosts,
+        projectId: null,
+        endpoints: { audio: { ...endpoint, model: 'eleven_text_to_sound_v2' } },
+        onBlock: () => controller.abort(),
+        confirmAsset: confirmAdditionalAsset,
+      });
+      const result = await generateElevenLabsAudioPreviewBatch(
+        endpoint,
+        input,
+        {
+          fetchImpl: async (url, init) => {
+            const target = new URL(String(url));
+            if (target.origin !== 'https://api.elevenlabs.io')
+              throw new Error('不支持的音效接口。');
+            const base = audioCostMonitor!.baseUrl('audio');
+            const suffix = base.endsWith('/v1')
+              ? target.pathname.replace(/^\/v1/, '')
+              : target.pathname;
+            return fetch(base + suffix + target.search, init);
+          },
+          signal: controller.signal,
+          onProgress: (progress) => {
+            lastProgress = progress;
+            sendAudioProgress('running');
+          },
+        },
+      );
+      status = result.failedCount ? 'warning' : 'success';
+      sendAudioProgress('complete');
+      return result;
+    } catch (error) {
+      if (controller.signal.aborted) {
+        status = 'warning';
+        sendAudioProgress('cancelled');
+      }
+      throw error;
+    } finally {
+      let costFailed = false;
+      await audioCostMonitor
+        ?.close(controller.signal.aborted ? '音效生成已暂停。' : '')
+        .catch(() => {
+          costFailed = true;
+        });
+      sentCalls = audioCostMonitor?.requestCount() ?? 0;
+      audioCostMonitor = undefined;
+      audioPreviewInFlight = false;
+      if (audioPreviewAbortController === controller) {
+        audioPreviewAbortController = null;
+      }
+      try {
+        if (sentCalls > 0)
+          await apiUsage.record({
+            provider: endpoint.provider,
+            model: 'eleven_text_to_sound_v2',
+            slot: 'audio',
+            source: 'asset',
+            status,
+            durationMs: Math.max(0, Date.now() - startedAt),
+            callCount: sentCalls,
+          });
+      } catch {
+        console.error('[liimit.ai] Failed to persist audio preview usage.');
+      }
+      if (costFailed) {
+        // A failed cost ledger must override even a successful generation result.
+        // eslint-disable-next-line no-unsafe-finally
+        throw new Error('音效费用记录保存失败，已停止；请先核对服务商账单。');
+      }
+    }
+  });
+
+  secureHandle('settings:cancel-audio-preview', () => {
+    if (!audioPreviewAbortController) return { status: 'idle' as const };
+    audioPreviewAbortController.abort();
+    return { status: 'cancelling' as const };
+  });
+
+  secureHandle('project:apply-audio-preview', async (value: unknown) => {
+    const input = validateApplyAudioPreviewInput(value);
+    const project = getProject(input.projectId);
+    const label = GAME_SOUND_LABELS[input.sound];
+    const confirmation = await dialog.showMessageBox(mainWindow!, {
+      type: 'question',
+      title: '确认替换游戏音效',
+      message: `要把试听音效用于“${project.name}”吗？`,
+      detail: `这次只替换“${label}”声音，并重新构建当前游戏。其他音效、关卡和美术不会改变。`,
+      buttons: ['取消', '确认替换'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
+    if (confirmation.response !== 1) {
+      return { status: 'cancelled', sound: input.sound } as const;
+    }
+    const relativePath = await projectAudioOverrides.apply(
+      project,
+      input.sound,
+      input.bytes,
+      input.mimeType,
+    );
+    return { status: 'applied', sound: input.sound, relativePath } as const;
+  });
+
+  secureHandle('project:audio-overrides', async (projectId: unknown) => {
+    const validatedProjectId = requireString(projectId, '项目 ID', 160);
+    const project = getProject(validatedProjectId);
+    return {
+      projectId: project.id,
+      overrides: await projectAudioOverrides.inspect(project),
+    };
+  });
+
+  secureHandle('project:restore-audio', async (value: unknown) => {
+    const input = validateRestoreProjectAudioInput(value);
+    const project = getProject(input.projectId);
+    const overrides = await projectAudioOverrides.inspect(project);
+    if (!overrides[input.sound]) {
+      return { status: 'unchanged', sound: input.sound } as const;
+    }
+    const label = GAME_SOUND_LABELS[input.sound];
+    const confirmation = await dialog.showMessageBox(mainWindow!, {
+      type: 'question',
+      title: '确认恢复内置音效',
+      message: `要恢复“${project.name}”的内置音效吗？`,
+      detail: `这次只把“${label}”恢复为 liimit.ai 内置声音。其他音效、关卡和美术不会改变。自定义音频文件会保留，但游戏不再使用它。`,
+      buttons: ['取消', '确认恢复'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
+    if (confirmation.response !== 1) {
+      return { status: 'cancelled', sound: input.sound } as const;
+    }
+    const restored = await projectAudioOverrides.restore(project, input.sound);
+    return {
+      status: restored ? 'restored' : 'unchanged',
+      sound: input.sound,
+    } as const;
   });
 
   secureHandle('settings:api-usage', () => apiUsage.snapshot());
@@ -506,16 +877,39 @@ function registerIpc(): void {
     });
   });
 
+  const proposalDecisions = new ProposalDecisionService({
+    getProject: (id) => getProject(id),
+    loadEvents: async (project) =>
+      (await agentEvents.load(project, getHistorySecrets())).events,
+    start: (input) => {
+      initialGeneration.assertIdle();
+      requireReadyStarterProject(getProject(input.projectId), '启动 Agent');
+      return runner.start(input);
+    },
+    record: async (event) => {
+      await agentEvents.append(event, getHistorySecrets());
+      mainWindow?.webContents.send('agent:event', event);
+    },
+  });
+  secureHandle('agent:proposal-decision', (value: unknown) =>
+    proposalDecisions.decide(value),
+  );
+
   secureHandle('agent:start', (value: unknown) => {
+    initialGeneration.assertIdle();
     const input = validateStartAgentInput(value);
     const project = getProject(input.projectId);
     requireReadyStarterProject(project, '启动 Agent');
     return runner.start(input);
   });
 
-  secureHandle('agent:stop', (projectId: unknown) =>
-    runner.stop(requireString(projectId, '项目 ID', 160)),
-  );
+  secureHandle('agent:stop', async (projectId: unknown) => {
+    const id = requireString(projectId, '项目 ID', 160);
+    // Mark creation intent cancelled before Runner/preparation can advance.
+    const stoppingPreparation = initialGeneration.stop(id);
+    await runner.stop(id);
+    await stoppingPreparation;
+  });
 
   secureHandle('agent:history', (projectId: unknown) => {
     const project = getProject(requireString(projectId, '项目 ID', 160));
@@ -804,11 +1198,18 @@ app
       directory: path.join(app.getPath('userData'), 'api-usage', 'v1'),
     });
     await apiUsage.initialize();
+    apiCosts = new ApiCostStore(
+      path.join(app.getPath('userData'), 'cost-monitor', 'v1'),
+    );
+    await apiCosts.initialize();
     dependencyManager = new DependencyManager();
     levelDocuments = new LevelDocumentStore();
     extensions = new ExtensionManager();
     githubSkills = new GitHubSkillInstaller(extensions);
     projects = new ProjectManager(store, paths.gameSkill);
+    projectAudioOverrides = new ProjectAudioOverrideService({
+      buildProject: (project) => projects.buildFixedProject(project),
+    });
     starterPreparation = new StarterPreparationService({
       store,
       projects,
@@ -833,6 +1234,43 @@ app
       emitProject: (project) =>
         mainWindow?.webContents.send('project:updated', project),
       recordApiUsage: (input) => apiUsage.record(input).then(() => undefined),
+      createCostMonitor: async (projectId, credentials, onBlock, onWarning) => {
+        if (audioPreviewInFlight)
+          throw new Error('请先停止音效生成，再开始 AI 制作。');
+        return ApiCostGateway.create({
+          ledger: apiCosts,
+          projectId,
+          endpoints: { main: credentials.main, ...credentials.providers },
+          onBlock,
+          onWarning,
+          confirmAsset: confirmAdditionalAsset,
+        });
+      },
+    });
+    initialGeneration = new InitialGenerationService({
+      create: (input) => projects.create(input),
+      prepare: (project) => starterPreparation.enqueue(project),
+      cancelPreparation: (id) => starterPreparation.cancel(id),
+      getProject,
+      save: (project) => store.upsertProject(project),
+      emit: (project) =>
+        mainWindow?.webContents.send('project:updated', project),
+      preflight: () => runner.assertCanStart(),
+      reportFailure: async (project, message) => {
+        const event = {
+          id: randomUUID(),
+          projectId: project.id,
+          type: 'error' as const,
+          stage: project.stage,
+          title: 'AI 创建未完成',
+          message,
+          isError: true,
+          timestamp: new Date().toISOString(),
+        };
+        await agentEvents.append(event, getHistorySecrets());
+        mainWindow?.webContents.send('agent:event', event);
+      },
+      start: (input) => runner.start(input),
     });
     registerIpc();
     await createWindow();
@@ -857,10 +1295,15 @@ app.on('before-quit', (event) => {
   if (quitInProgress) return;
   quitInProgress = true;
   void (async () => {
+    initialGeneration?.preventNewStarts();
     await starterPreparation?.shutdown();
     await runner?.shutdown();
+    audioPreviewAbortController?.abort();
+    await audioCostMonitor?.close('应用退出，已停止音效调用。');
+    await initialGeneration?.settled();
     await agentEvents?.flush();
     await apiUsage?.flushPending();
+    await apiCosts?.flushPending();
     projects?.stopAllPreviews();
     quitReady = true;
     app.quit();

@@ -9,6 +9,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { Config } from '../config/config.js';
+import { FrameExtractionService } from '../services/assetVideoService.js';
 import { createMockWorkspaceContext } from '../test-utils/mockWorkspaceContext.js';
 
 const mocks = vi.hoisted(() => ({
@@ -43,6 +44,7 @@ describe('GenerateAssetsTool resume behavior', () => {
   let mockConfig: Config;
   let editImage: ReturnType<typeof vi.fn>;
   let generateImage: ReturnType<typeof vi.fn>;
+  let generateDirectAudio: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     tempRootDir = await fs.mkdtemp(
@@ -55,11 +57,27 @@ describe('GenerateAssetsTool resume behavior', () => {
     generateImage = vi
       .fn()
       .mockResolvedValue('https://example.test/generated.png');
-    mocks.createModelRouter.mockReset();
-    mocks.createModelRouter.mockReturnValue({
-      editImage,
-      generateImage,
+    generateDirectAudio = vi.fn().mockResolvedValue({
+      buffer: Buffer.from('generated-audio'),
+      extension: 'mp3',
+      contentType: 'audio/mpeg',
     });
+    mocks.createModelRouter.mockReset();
+    mocks.createModelRouter.mockImplementation((options) =>
+      options?.requiredModality === 'audio'
+        ? {
+            audioConfig: { provider: 'elevenlabs' },
+            generateDirectAudio,
+          }
+        : {
+            editImage,
+            generateImage,
+          },
+    );
+    vi.spyOn(
+      FrameExtractionService.prototype,
+      'isFFmpegAvailable',
+    ).mockResolvedValue(false);
     mocks.removeBackgroundSafe.mockReset();
     mocks.removeBackgroundSafe.mockResolvedValue(VALID_PNG);
     mocks.removeBackgroundFromBuffer.mockReset();
@@ -74,6 +92,7 @@ describe('GenerateAssetsTool resume behavior', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await fs.rm(tempRootDir, { recursive: true, force: true });
   });
 
@@ -222,4 +241,93 @@ describe('GenerateAssetsTool resume behavior', () => {
     expect(result.llmContent).toContain('Asset generation is incomplete');
     expect(result.llmContent).toContain('overwrite_existing=false');
   });
+
+  it('generates audio with an audio-only router and no visual provider', async () => {
+    const tool = new GenerateAssetsTool(mockConfig);
+    const invocation = tool.build({
+      style_anchor: 'bright cartoon game art',
+      assets: [
+        {
+          type: 'audio',
+          key: 'jump_sfx',
+          description: 'short cheerful jump sound',
+          audioType: 'sfx',
+          duration: 1,
+        },
+      ],
+    });
+
+    const result = await invocation.execute(new AbortController().signal);
+
+    expect(mocks.createModelRouter).toHaveBeenCalledTimes(1);
+    expect(mocks.createModelRouter).toHaveBeenCalledWith(
+      expect.objectContaining({ requiredModality: 'audio' }),
+    );
+    expect(generateDirectAudio).toHaveBeenCalledTimes(1);
+    expect(await fs.readFile(path.join(assetsDir, 'jump_sfx.mp3'))).toEqual(
+      Buffer.from('generated-audio'),
+    );
+    expect(result.error).toBeUndefined();
+
+    const assetPack = JSON.parse(
+      await fs.readFile(path.join(assetsDir, 'asset-pack.json'), 'utf8'),
+    );
+    expect(assetPack.audio.files).toContainEqual({
+      type: 'audio',
+      key: 'jump_sfx',
+      url: 'assets/jump_sfx.mp3',
+    });
+  });
+
+  it.each([
+    ['visual first', ['background', 'audio']],
+    ['audio first', ['audio', 'background']],
+  ] as const)(
+    'keeps mixed visual and audio routing independent with %s',
+    async (_label, order) => {
+      mocks.createModelRouter.mockImplementation((options) => {
+        if (options?.requiredModality === 'audio') {
+          return {
+            audioConfig: { provider: 'elevenlabs' },
+            generateDirectAudio,
+          };
+        }
+        throw new Error('OpenGame image generation is not configured');
+      });
+
+      const requests = {
+        background: {
+          type: 'background' as const,
+          key: `missing_image_${order[0]}`,
+          description: 'a forest background',
+        },
+        audio: {
+          type: 'audio' as const,
+          key: `success_audio_${order[0]}`,
+          description: 'short confirmation sound',
+          audioType: 'sfx' as const,
+        },
+      };
+      const tool = new GenerateAssetsTool(mockConfig);
+      const invocation = tool.build({
+        style_anchor: 'bright cartoon game art',
+        assets: order.map((type) => requests[type]),
+      });
+
+      const result = await invocation.execute(new AbortController().signal);
+
+      expect(result.error?.message).toContain(
+        'OpenGame image generation is not configured',
+      );
+      expect(
+        await fs.readFile(
+          path.join(assetsDir, `success_audio_${order[0]}.mp3`),
+        ),
+      ).toEqual(Buffer.from('generated-audio'));
+      expect(generateDirectAudio).toHaveBeenCalled();
+      expect(mocks.createModelRouter).toHaveBeenCalledWith(
+        expect.objectContaining({ requiredModality: 'audio' }),
+      );
+    },
+  );
 });

@@ -13,6 +13,7 @@ import {
 } from '../src/shared/types.js';
 import {
   AgentRunner,
+  initialCreationPrompt,
   assertSameProjectIdentity,
   assetIdleTimeoutFromEnv,
   assetOutputDirFromInput,
@@ -28,6 +29,7 @@ import {
 } from '../src/main/agentRunner.js';
 import type { ChildProcess } from 'node:child_process';
 import { makeReadyStarterPreparation } from './starterPreparationFixtures.js';
+import { AgentVerificationGuard } from '../src/main/agentVerificationGuard.js';
 
 describe('deriveRuntimeProductPolicy', () => {
   it('固定项目只启用 platformer，不加载 Skills 或 MCP', () => {
@@ -51,6 +53,47 @@ describe('deriveRuntimeProductPolicy', () => {
 });
 
 describe('Agent project identity guard', () => {
+  it('首次创建注入授权上下文，模板、已完成及后续会话不绕过确认', () => {
+    const project = {
+      creationMode: 'ai',
+      initialGeneration: 'pending',
+    } as ProjectRecord;
+    expect(initialCreationPrompt(project, '三关冰雪')).toContain(
+      '首次创建任务',
+    );
+    expect(initialCreationPrompt(project, '三关冰雪')).toContain(
+      '用户要求：\n三关冰雪',
+    );
+    expect(
+      initialCreationPrompt({ ...project, sessionId: 's' }, '只调整方案'),
+    ).toBe('只调整方案');
+    expect(
+      initialCreationPrompt(
+        { ...project, initialGeneration: 'completed' },
+        '移动平台',
+      ),
+    ).toBe('移动平台');
+    expect(
+      initialCreationPrompt(
+        { ...project, creationMode: 'template' },
+        '移动平台',
+      ),
+    ).toBe('移动平台');
+  });
+
+  it.each(['before', 'after'])(
+    'AI 首次创建完成标记依赖实际内容变化: %s',
+    async (content) => {
+      const h = createCompletionGateHarness(undefined, undefined, content);
+      h.original.creationMode = 'ai';
+      h.original.initialGeneration = 'active';
+      await h.handleResult({ type: 'result', result: '制作完成' });
+      await h.close(0);
+      expect(h.current().initialGeneration).toBe(
+        content === 'after' ? 'completed' : 'incomplete',
+      );
+    },
+  );
   it('允许同一项目 ID 和目录继续执行', () => {
     expect(() =>
       assertSameProjectIdentity(
@@ -125,6 +168,84 @@ describe('isRuntimeFailure', () => {
 });
 
 describe('Runtime completion gate', () => {
+  it.each([false, true])(
+    'AI foundation requires actual game content before build/completion: changed=%s',
+    async (changed) => {
+      const root = await mkdtemp(
+        path.join(tmpdir(), 'liimit-foundation-gate-'),
+      );
+      const templatesDir = path.resolve('../../agent-test/templates');
+      try {
+        await mkdir(path.join(root, 'src'));
+        const campaign = JSON.parse(
+          await readFile(
+            path.join(templatesDir, 'variants/ai-foundation/src/levels.json'),
+            'utf8',
+          ),
+        );
+        campaign.levels[0].name = '新的第一关';
+        if (changed) campaign.levels[0].abilities.doubleJumpEnabled = true;
+        await writeFile(
+          path.join(root, 'src/levels.json'),
+          JSON.stringify(campaign),
+        );
+        await writeFile(
+          path.join(root, 'src/gameInfo.json'),
+          JSON.stringify({
+            version: 1,
+            title: '新的游戏',
+            subtitle: '新的内容',
+          }),
+        );
+        const harness = createCompletionGateHarness(
+          undefined,
+          undefined,
+          'test-files-changed',
+          templatesDir,
+        );
+        Object.assign(harness.original, {
+          path: root,
+          creationMode: 'ai',
+          initialGeneration: 'active',
+          starterTemplateId: 'ai-foundation',
+        });
+        await harness.handleResult({ type: 'result', result: '完成' });
+        await harness.close(0);
+        expect(harness.current().initialGeneration).toBe(
+          changed ? 'completed' : 'incomplete',
+        );
+        expect(harness.buildFixedProject).toHaveBeenCalledTimes(
+          changed ? 1 : 0,
+        );
+        expect(harness.events.some((event) => event.type === 'complete')).toBe(
+          changed,
+        );
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+  it.each(['before', null])(
+    'does not claim completion without verified file changes: %s',
+    async (content) => {
+      const harness = createCompletionGateHarness(
+        undefined,
+        undefined,
+        content,
+      );
+      await harness.handleResult({
+        type: 'result',
+        result: '本轮只给出建议',
+        num_turns: 1,
+      });
+      await harness.close(0);
+      expect(harness.current().status).toBe('waiting');
+      expect(harness.buildFixedProject).not.toHaveBeenCalled();
+      expect(harness.events.some((event) => event.type === 'complete')).toBe(
+        false,
+      );
+    },
+  );
   it('marks a successful Runtime result completed only after a fresh controlled build and Web entry verification', async () => {
     const harness = createCompletionGateHarness();
 
@@ -164,7 +285,7 @@ describe('Runtime completion gate', () => {
     expect(harness.events).toContainEqual(
       expect.objectContaining({
         type: 'complete',
-        title: '游戏生成完成',
+        title: '游戏文件已更新并通过运行检查',
         isError: false,
       }),
     );
@@ -313,129 +434,272 @@ describe('Runtime completion gate', () => {
   });
 });
 
-describe('fixed project preparation gate', () => {
-  it('ready 项目启动 Agent 时沿用同一 ID、目录并保留用户关卡哈希', async () => {
-    const root = await mkdtemp(
-      path.join(tmpdir(), 'liimit-agent-same-project-'),
+describe('verification guard integration', () => {
+  it('stops after three errors, redacts output, preserves session and ignores late success', async () => {
+    const h = createCompletionGateHarness();
+    h.original.initialGeneration = 'active';
+    (h.runner as unknown as { activeSecrets: string[] }).activeSecrets = [
+      'secret-test-value',
+    ];
+    for (let i = 0; i < 3; i++) {
+      await h.handleResult({
+        type: 'assistant',
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: `t${i}`,
+              name: 'read_file',
+              input: { absolute_path: '/outside' },
+            },
+          ],
+        },
+      });
+      await h.handleResult({
+        type: 'user',
+        message: {
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: `t${i}`,
+              is_error: true,
+              content:
+                'File path must be within one of the workspace directories: secret-test-value',
+            },
+          ],
+        },
+      });
+    }
+    expect(h.terminateRuntime).toHaveBeenCalledOnce();
+    await h.handleResult({ type: 'result', result: '完成了' });
+    await h.close(0);
+    expect(h.current()).toMatchObject({
+      status: 'waiting',
+      initialGeneration: 'incomplete',
+      sessionId: 'session-completion',
+    });
+    expect(h.buildFixedProject).not.toHaveBeenCalled();
+    expect(h.events.some((e) => e.title === '检查遇到问题，已自动停止')).toBe(
+      true,
     );
-    try {
-      await mkdir(path.join(root, 'dist'), { recursive: true });
-      await writeFile(path.join(root, 'dist', 'cli.js'), '', 'utf8');
-      const projectDirectory = path.join(root, 'user-project');
-      const levelPath = path.join(projectDirectory, 'src', 'level.json');
-      await mkdir(path.dirname(levelPath), { recursive: true });
-      const userLevel = JSON.stringify({
-        version: 1,
-        width: 2400,
-        height: 720,
-        gridSize: 32,
-        objects: [
+    expect(JSON.stringify(h.events)).not.toContain('secret-test-value');
+    expect(h.events.some((e) => e.type === 'complete')).toBe(false);
+  });
+
+  it('detects a failed checker even if the tool reports success', async () => {
+    const h = createCompletionGateHarness();
+    await h.handleResult({
+      type: 'assistant',
+      message: {
+        content: [
           {
-            id: 'user-edited-platform',
-            type: 'platform',
-            x: 456,
-            y: 512,
-            width: 320,
-            height: 32,
+            type: 'tool_use',
+            id: 'checker',
+            name: 'run_shell_command',
+            input: { command: 'node .liimit-checks/verify.mjs' },
           },
         ],
-      });
-      await writeFile(levelPath, userLevel, 'utf8');
-      const beforeHash = await fileSha256(levelPath);
-      const timestamp = '2026-08-26T01:00:00.000Z';
-      let project: ProjectRecord = {
-        id: 'same-ready-project',
-        name: '保留用户关卡',
-        path: projectDirectory,
-        prompt: '继续修改这个游戏',
-        status: 'draft',
-        stage: 'brief',
-        productMode: FIXED_PRODUCT_MODE.id,
-        starterPreparation: makeReadyStarterPreparation(),
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      };
-      const seenProjectIds: string[] = [];
-      const persisted: ProjectRecord[] = [];
-      const prepareFixedProject = vi.fn(async (candidate: ProjectRecord) => {
-        expect(candidate.id).toBe(project.id);
-        expect(candidate.path).toBe(projectDirectory);
-        expect(await fileSha256(levelPath)).toBe(beforeHash);
-        await mkdir(path.join(projectDirectory, '.gameagent'), {
-          recursive: true,
-        });
-        await writeFile(
-          path.join(projectDirectory, '.gameagent', 'dependencies.json'),
-          '{"prepared":true}',
-          'utf8',
-        );
-        expect(await fileSha256(levelPath)).toBe(beforeHash);
-        return {
-          scaffoldedFiles: 0,
-          preservedFiles: 1,
-          dependencies: 'ready' as const,
-        };
-      });
-      const child = fakeRuntimeChild();
-      const spawnRuntime = vi.fn(
-        (
-          _command: string,
-          _args: readonly string[],
-          options: { cwd?: string },
-        ) => {
-          expect(options.cwd).toBe(projectDirectory);
-          return child;
-        },
-      ) as unknown as typeof import('node:child_process').spawn;
-      const runner = new AgentRunner({
-        repoRoot: root,
-        store: {
-          getProject: (projectId: string) => {
-            seenProjectIds.push(projectId);
-            return projectId === project.id ? project : undefined;
+      },
+    });
+    await h.handleResult({
+      type: 'user',
+      message: {
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'checker',
+            content:
+              'TypeError: Cannot read properties of undefined\n    at file:///project/verify.mjs:1:1',
           },
-          getRuntimeSettings: () => makeSettings(),
-          upsertProject: async (next: ProjectRecord) => {
-            persisted.push(structuredClone(next));
-            project = next;
-          },
-        },
-        projects: {
-          prepareFixedProject,
-          prepareSystemPrompt: vi.fn(async () => undefined),
-          locationsInfo: {
-            templatesDir: path.join(root, 'templates'),
-            docsDir: path.join(root, 'docs'),
-          },
-        },
-        emitEvent: vi.fn(),
-        emitProject: vi.fn(),
-        spawnRuntime,
-      } as unknown as ConstructorParameters<typeof AgentRunner>[0]);
-
-      await expect(
-        runner.start({
-          projectId: 'same-ready-project',
-          prompt: '在现有关卡上继续修改',
-        }),
-      ).resolves.toEqual({ accepted: true });
-
-      expect(seenProjectIds[0]).toBe('same-ready-project');
-      expect(prepareFixedProject).toHaveBeenCalledOnce();
-      expect(spawnRuntime).toHaveBeenCalledOnce();
-      expect(persisted.every((item) => item.id === project.id)).toBe(true);
-      expect(persisted.every((item) => item.path === projectDirectory)).toBe(
-        true,
-      );
-      expect(await readFile(levelPath, 'utf8')).toBe(userLevel);
-      expect(await fileSha256(levelPath)).toBe(beforeHash);
-
-      child.emit('close', 1);
-      await vi.waitFor(() => expect(project.status).toBe('failed'));
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+        ],
+      },
+    });
+    expect(h.events.at(-1)).toMatchObject({
+      title: '工具执行失败',
+      isError: true,
+    });
+    expect(h.terminateRuntime).not.toHaveBeenCalled();
   });
+
+  it('enforces the post-build budget through the monitor even with live output', async () => {
+    const h = createCompletionGateHarness();
+    h.active.verificationGuard.observe(
+      {
+        tool: 'run_shell_command',
+        input: { command: 'npm run build' },
+        text: '✓ built in 2s',
+      },
+      Date.now() - 301_000,
+    );
+    const monitor = h.runner as unknown as {
+      monitorActiveRun(id: string, child: ChildProcess): void;
+    };
+    monitor.monitorActiveRun(h.original.id, h.active.child);
+    expect(h.terminateRuntime).toHaveBeenCalledOnce();
+    monitor.monitorActiveRun(h.original.id, h.active.child);
+    expect(h.terminateRuntime).toHaveBeenCalledOnce();
+    await h.close(null);
+    expect(h.current().status).toBe('waiting');
+  });
+
+  it('recognizes an in-flight asset call even when another tool is first', () => {
+    const tracker = new PendingToolTracker();
+    tracker.add('read_file', 'read');
+    tracker.add('generate_game_assets', 'asset');
+    expect(tracker.hasAssetGeneration()).toBe(true);
+    tracker.complete('asset');
+    expect(tracker.hasAssetGeneration()).toBe(false);
+  });
+});
+
+describe('fixed project preparation gate', () => {
+  it.each([false, true])(
+    'ready 项目启动/恢复(%s)时沿用同一 ID、目录并保留用户关卡哈希',
+    async (resume) => {
+      const root = await mkdtemp(
+        path.join(tmpdir(), 'liimit-agent-same-project-'),
+      );
+      try {
+        await mkdir(path.join(root, 'dist'), { recursive: true });
+        await writeFile(path.join(root, 'dist', 'cli.js'), '', 'utf8');
+        const projectDirectory = path.join(root, 'user-project');
+        const levelPath = path.join(projectDirectory, 'src', 'level.json');
+        await mkdir(path.dirname(levelPath), { recursive: true });
+        const userLevel = JSON.stringify({
+          version: 1,
+          width: 2400,
+          height: 720,
+          gridSize: 32,
+          objects: [
+            {
+              id: 'user-edited-platform',
+              type: 'platform',
+              x: 456,
+              y: 512,
+              width: 320,
+              height: 32,
+            },
+          ],
+        });
+        await writeFile(levelPath, userLevel, 'utf8');
+        const beforeHash = await fileSha256(levelPath);
+        const timestamp = '2026-08-26T01:00:00.000Z';
+        let project: ProjectRecord = {
+          id: 'same-ready-project',
+          sessionId: resume ? 'existing-session' : undefined,
+          name: '保留用户关卡',
+          path: projectDirectory,
+          prompt: '继续修改这个游戏',
+          status: 'draft',
+          stage: 'brief',
+          productMode: FIXED_PRODUCT_MODE.id,
+          starterPreparation: makeReadyStarterPreparation(),
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        };
+        const seenProjectIds: string[] = [];
+        const persisted: ProjectRecord[] = [];
+        const prepareFixedProject = vi.fn(async (candidate: ProjectRecord) => {
+          expect(candidate.id).toBe(project.id);
+          expect(candidate.path).toBe(projectDirectory);
+          expect(await fileSha256(levelPath)).toBe(beforeHash);
+          await mkdir(path.join(projectDirectory, '.gameagent'), {
+            recursive: true,
+          });
+          await writeFile(
+            path.join(projectDirectory, '.gameagent', 'dependencies.json'),
+            '{"prepared":true}',
+            'utf8',
+          );
+          expect(await fileSha256(levelPath)).toBe(beforeHash);
+          return {
+            scaffoldedFiles: 0,
+            preservedFiles: 1,
+            dependencies: 'ready' as const,
+          };
+        });
+        const child = fakeRuntimeChild();
+        const costMonitor = {
+          baseUrl: (slot: string) =>
+            `http://127.0.0.1:12345/secret-route/${slot}/v1`,
+          redactions: () => ['secret-route'],
+          close: vi.fn(async () => undefined),
+        };
+        const createCostMonitor = vi.fn(async () => costMonitor);
+        const spawnRuntime = vi.fn(
+          (
+            _command: string,
+            _args: readonly string[],
+            options: { cwd?: string },
+          ) => {
+            expect(options.cwd).toBe(projectDirectory);
+            return child;
+          },
+        ) as unknown as typeof import('node:child_process').spawn;
+        const runner = new AgentRunner({
+          repoRoot: root,
+          store: {
+            getProject: (projectId: string) => {
+              seenProjectIds.push(projectId);
+              return projectId === project.id ? project : undefined;
+            },
+            getRuntimeSettings: () => makeSettings(),
+            upsertProject: async (next: ProjectRecord) => {
+              persisted.push(structuredClone(next));
+              project = next;
+            },
+          },
+          projects: {
+            prepareFixedProject,
+            prepareSystemPrompt: vi.fn(async () => undefined),
+            locationsInfo: {
+              templatesDir: path.join(root, 'templates'),
+              docsDir: path.join(root, 'docs'),
+            },
+          },
+          emitEvent: vi.fn(),
+          emitProject: vi.fn(),
+          spawnRuntime,
+          createCostMonitor,
+        } as unknown as ConstructorParameters<typeof AgentRunner>[0]);
+
+        await expect(
+          runner.start({
+            projectId: 'same-ready-project',
+            prompt: '在现有关卡上继续修改',
+            resume,
+          }),
+        ).resolves.toEqual({ accepted: true });
+
+        expect(seenProjectIds[0]).toBe('same-ready-project');
+        expect(prepareFixedProject).toHaveBeenCalledOnce();
+        expect(spawnRuntime).toHaveBeenCalledOnce();
+        expect(createCostMonitor).toHaveBeenCalledOnce();
+        const credentials = JSON.parse(
+          String((child.stdio[3] as PassThrough).read()),
+        );
+        expect(credentials.main.baseUrl).toBe(costMonitor.baseUrl('main'));
+        const sentPrompt = String(child.stdin?.read());
+        expect(sentPrompt).toContain('在现有关卡上继续修改');
+        expect(sentPrompt).toContain('不要运行 npm run dev');
+        expect(sentPrompt).toContain(
+          path.join(projectDirectory, '.liimit-checks'),
+        );
+        expect(persisted.every((item) => item.id === project.id)).toBe(true);
+        expect(persisted.every((item) => item.path === projectDirectory)).toBe(
+          true,
+        );
+        expect(await readFile(levelPath, 'utf8')).toBe(userLevel);
+        expect(await fileSha256(levelPath)).toBe(beforeHash);
+
+        child.emit('close', 1);
+        await vi.waitFor(() => expect(project.status).toBe('failed'));
+        expect(costMonitor.close).toHaveBeenCalledWith('任务异常退出。');
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it('prepares dependencies before the prompt and Runtime process', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'liimit-start-order-'));
@@ -954,6 +1218,8 @@ function makeSettings(): AppSettings {
 function createCompletionGateHarness(
   verificationError?: Error,
   buildError?: Error,
+  finalContent: string | null = 'after',
+  templatesDir?: string,
 ) {
   const timestamp = '2026-08-23T12:00:00.000Z';
   const original: ProjectRecord = {
@@ -979,17 +1245,26 @@ function createCompletionGateHarness(
   const upsertProject = vi.fn(async (next: ProjectRecord) => {
     project = next;
   });
+  const terminateRuntime = vi.fn(async () => undefined);
   const runner = new AgentRunner({
+    terminateRuntime,
     repoRoot: '/tmp/liimit-completion-runtime',
+    snapshotProject: async () => finalContent,
     store: {
       getProject: () => project,
       upsertProject,
     },
-    projects: { buildFixedProject, verifyPlayableBuild },
+    projects: {
+      buildFixedProject,
+      verifyPlayableBuild,
+      locationsInfo: { templatesDir },
+    },
     emitEvent: (event: AgentEvent) => events.push(event),
     emitProject: () => undefined,
   } as unknown as ConstructorParameters<typeof AgentRunner>[0]);
   const active = {
+    verificationGuard: new AgentVerificationGuard(),
+    initialContent: 'before',
     projectId: original.id,
     child: fakeChild(4321),
     stoppedByUser: false,
@@ -1004,6 +1279,8 @@ function createCompletionGateHarness(
   (runner as unknown as { active: unknown }).active = active;
 
   return {
+    active,
+    terminateRuntime,
     runner,
     original,
     events,

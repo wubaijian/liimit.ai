@@ -55,6 +55,134 @@ afterEach(async () => {
 });
 
 describe('FixedProjectProvisioner', () => {
+  it('seeds AI content first, omits example art and preserves user changes on reprepare', async () => {
+    const fixture = await createFixture();
+    const variant = path.join(
+      fixture.locations.templatesDir,
+      'variants/ai-foundation/src',
+    );
+    for (const file of [
+      'levels.json',
+      'level.json',
+      'gameInfo.json',
+      'visualStyle.json',
+    ]) {
+      await write(path.join(variant, file), `neutral-${file}`);
+      await write(
+        path.join(
+          fixture.locations.templatesDir,
+          'modules/platformer/src',
+          file,
+        ),
+        `example-${file}`,
+      );
+    }
+    await write(
+      path.join(
+        fixture.locations.templatesDir,
+        'core/public/assets/images/fire.png',
+      ),
+      'old art',
+    );
+    const provisioner = new FixedProjectProvisioner(fixture.locations, {
+      runCommand: async (invocation) => {
+        if (invocation.args.includes('ci'))
+          await createInstalledPackages(fixture.projectDirectory);
+        return successfulCommand;
+      },
+      resolveNpm: async () => ({
+        executable: '/trusted/node',
+        prefixArgs: ['/trusted/npm-cli.js'],
+      }),
+    });
+    await provisioner.prepare(
+      fixture.projectDirectory,
+      undefined,
+      undefined,
+      'ai-foundation',
+    );
+    const target = path.join(fixture.projectDirectory, 'src/levels.json');
+    expect(await readFile(target, 'utf8')).toBe('neutral-levels.json');
+    await expect(
+      lstat(
+        path.join(fixture.projectDirectory, 'public/assets/images/fire.png'),
+      ),
+    ).rejects.toThrow();
+    await writeFile(target, 'user-created-campaign');
+    await provisioner.prepare(
+      fixture.projectDirectory,
+      undefined,
+      undefined,
+      'ai-foundation',
+    );
+    expect(await readFile(target, 'utf8')).toBe('user-created-campaign');
+  });
+  it('overlays the selected zero-factory files without changing the shared Phaser base', async () => {
+    const fixture = await createFixture();
+    await Promise.all([
+      write(
+        path.join(
+          fixture.locations.templatesDir,
+          'variants',
+          'zero-factory-escape',
+          'src',
+          'gameConfig.json',
+        ),
+        'zero-factory-config',
+      ),
+      write(
+        path.join(
+          fixture.locations.templatesDir,
+          'variants',
+          'zero-factory-escape',
+          'public',
+          'assets',
+          'factory',
+          'marker.txt',
+        ),
+        'factory-assets',
+      ),
+    ]);
+    const provisioner = new FixedProjectProvisioner(fixture.locations, {
+      runCommand: async (invocation) => {
+        if (invocation.args.includes('ci')) {
+          await createInstalledPackages(fixture.projectDirectory);
+        }
+        return successfulCommand;
+      },
+      resolveNpm: async () => ({
+        executable: '/trusted/node',
+        prefixArgs: ['/trusted/npm-cli.js'],
+      }),
+    });
+
+    await provisioner.prepare(
+      fixture.projectDirectory,
+      undefined,
+      undefined,
+      'zero-factory-escape',
+    );
+
+    await expect(
+      readFile(
+        path.join(fixture.projectDirectory, 'src', 'gameConfig.json'),
+        'utf8',
+      ),
+    ).resolves.toBe('zero-factory-config');
+    await expect(
+      readFile(
+        path.join(
+          fixture.projectDirectory,
+          'public',
+          'assets',
+          'factory',
+          'marker.txt',
+        ),
+        'utf8',
+      ),
+    ).resolves.toBe('factory-assets');
+  });
+
   it('reports scaffold before copying and dependencies before controlled installation without exposing command details', async () => {
     const fixture = await createFixture();
     const reports: unknown[][] = [];

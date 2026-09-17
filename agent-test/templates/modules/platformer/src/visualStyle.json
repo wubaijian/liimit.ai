@@ -1,0 +1,20 @@
+{
+  "mode": "builtin",
+  "backgroundColor": "#17212b",
+  "colors": {
+    "basalt": 4873581,
+    "basaltDeep": 2371383,
+    "mineralGold": 8362942,
+    "mineralLight": 13029871,
+    "lava": 14833773,
+    "lavaLight": 16427931,
+    "iceBlue": 7453383,
+    "iceBlueDeep": 3102307
+  },
+  "images": {
+    "background": "",
+    "player": "",
+    "slime": "",
+    "bee": ""
+  }
+}
